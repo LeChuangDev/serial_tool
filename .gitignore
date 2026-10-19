@@ -1,0 +1,24 @@
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*.pyc
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+*.exe
+
+# 编辑器本地配置
+.vscode/
+.idea/
+
+# 系统临时文件
+Thumbs.db
+.DS_Store
+*.log
