@@ -9,7 +9,7 @@ def main():
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
 
-    from main_window import LecoSerial
+    from serialtool.main_window import LecoSerial
     app = QApplication(sys.argv)
     win = LecoSerial()
     win.show()

@@ -14,13 +14,13 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QComboBox, QCheckBox, QRadioButton, QLineEdit, QPlainTextEdit,
     QMessageBox, QFileDialog, QFrame, QSplitter, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMenu, QAbstractItemView,
+    QHeaderView, QMenu, QAbstractItemView, QApplication,
 )
 
-import config
-import styles
-import utils
-from serial_worker import SerialWorker
+from . import config
+from . import styles
+from . import utils
+from .serial_worker import SerialWorker
 
 
 # ====================== 自定义下拉控件（点击即展开） ======================
@@ -181,6 +181,9 @@ class LecoSerial(QMainWindow):
         self._recv_theme = config.RECV_THEME_BLUE
         self._ms_looping = False
         self._ms_loop_idx = 0
+        self._port_set = set()         # 上次扫描到的串口集合（热插拔比对）
+        self._port_missing = False     # 已提示过"串口拔出"，避免每 2s 刷屏
+        self._dot_state = None         # 上次状态点样式（仅变化时重刷）
         self.qs = QSettings("Leeco", "SerialTool")
 
         # ---------- 定时器 ----------
@@ -202,6 +205,7 @@ class LecoSerial(QMainWindow):
         self.worker.connected.connect(self.on_connected)
         self.worker.disconnected.connect(self.on_disconnected)
         self.worker.error.connect(self.on_worker_error)
+        self.worker.lines_state.connect(self.on_lines_state)
 
         # ---------- 全局样式（含卡片样式，卡片必须与全局 QSS 同一次应用才生效） ----------
         self.setStyleSheet(styles.GLOBAL_QSS + styles.CARD_QSS)
@@ -251,7 +255,7 @@ class LecoSerial(QMainWindow):
         self.load_settings()
 
         self.rate_timer.start(1000)
-        self.port_timer.start(2000)
+        self.port_timer.start(5000)      # 5s 扫一次串口：Windows 枚举有开销，热插拔体验够用
         self.on_auto_wrap(self.ck_wrap.isChecked())
         self.apply_recv_theme()
         self.update_status()
@@ -585,7 +589,7 @@ class LecoSerial(QMainWindow):
         brand = QLabel("串口调试终端")
         brand.setObjectName("brandTitle")
         mb.setCornerWidget(brand, Qt.Corner.TopLeftCorner)
-        ver = QLabel("v2.0")
+        ver = QLabel("v" + config.APP_VERSION)
         ver.setObjectName("brandVer")
         mb.setCornerWidget(ver, Qt.Corner.TopRightCorner)
         m_file = mb.addMenu("文件")
@@ -609,7 +613,7 @@ class LecoSerial(QMainWindow):
 
     def open_tools(self, tab=0):
         """打开校验和 / 转换工具对话框（tab: 0 校验和, 1 HEX/ASCII 转换）。"""
-        from tools_dialog import ToolsDialog
+        from .tools_dialog import ToolsDialog
         dlg = ToolsDialog(self, tab)
         dlg.exec()
 
@@ -667,6 +671,9 @@ class LecoSerial(QMainWindow):
         # 且线程随后成功打开串口会把界面改成"已连接"。
         if self.worker.isRunning():
             self.worker.stop()
+        if self.worker.isRunning():
+            print("【警告】串口线程未在超时内退出，可能仍在收尾")
+        self.worker.clear_cmds()      # 丢弃未发完的写入，避免下次连接时误发
         if self._connected:
             print("【日志】串口已关闭")
 
@@ -699,30 +706,46 @@ class LecoSerial(QMainWindow):
         self.open_port(port, baud, bits, stop, par)
 
     # 热插拔检测：只提示，不自动断开（避免 ESP32 复位时设备短暂消失被误判）
-    def check_ports(self):
-        if self._closing:
-            return
+    def _scan_ports(self):
+        """扫描当前串口设备名（过滤蓝牙虚拟串口）。"""
         try:
-            now = set(p.device for p in serial.tools.list_ports.comports()
-                      if "bluetooth" not in p.description.lower()
-                      and "蓝牙" not in p.description.lower())
+            ports = serial.tools.list_ports.comports()
         except Exception:
-            return
-        if self._connected and self.current_port and self.current_port not in now:
-            self.show_tip("提示：串口已拔出，请重新连接", 5000)
-            print("【日志】检测到串口拔出")
-
-    def refresh_port_list(self):
-        self.cb_com.clear()
-        ports = serial.tools.list_ports.comports()
-        usb = []
+            return []
+        out = []
         for p in ports:
             d = p.description.lower()
             if "bluetooth" in d or "蓝牙" in d:
                 continue
-            usb.append(p.device); self.cb_com.addItem(p.device)
-        if len(usb) == 1:
-            self.cb_com.setCurrentText(usb[0])
+            out.append(p.device)
+        return sorted(out)
+
+    def check_ports(self):
+        if self._closing:
+            return
+        now = set(self._scan_ports())
+        if now != self._port_set:
+            self.refresh_port_list()      # 热插拔：下拉列表自动同步（保留当前选择）
+        if self._connected and self.current_port and self.current_port not in now:
+            if not self._port_missing:
+                self._port_missing = True
+                self.show_tip("提示：串口已拔出，请重新连接", 5000)
+                print("【日志】检测到串口拔出")
+        else:
+            self._port_missing = False
+
+    def refresh_port_list(self):
+        ports = self._scan_ports()
+        self._port_set = set(ports)
+        cur = self.cb_com.currentText()
+        self.cb_com.blockSignals(True)
+        self.cb_com.clear()
+        self.cb_com.addItems(ports)
+        if cur in ports:
+            self.cb_com.setCurrentText(cur)
+        elif len(ports) == 1:
+            self.cb_com.setCurrentText(ports[0])
+        self.cb_com.blockSignals(False)
 
     # ---------- worker 信号槽 ----------
     def on_connected(self, info):
@@ -755,6 +778,15 @@ class LecoSerial(QMainWindow):
             print(f"【警告】{msg}")
             self.append_recv_text(f"!!! {msg}", config.ERROR_COLOR)
 
+    def on_lines_state(self, dtr, rts):
+        """打开端口后的实际 DTR/RTS 电平：以界面勾选状态为准回写硬件，
+        保证"按钮显示"与"实际信号线"一致（pyserial 默认会断言这两条线）。"""
+        for btn, real, setter in ((self.ck_dtr, dtr, self.worker.set_dtr),
+                                  (self.ck_rts, rts, self.worker.set_rts)):
+            want = btn.isChecked()
+            if want != real:
+                setter(want)      # 用户设置与硬件实际不符时下发用户值
+
     # =========================================================
     #  接收处理
     # =========================================================
@@ -764,10 +796,11 @@ class LecoSerial(QMainWindow):
         self.rx_count += sum(len(p) for p, _ in packets)
         texts = []
         for chunk, ts in packets:
-            # 原始字节缓冲（HEX 导出用）
+            # 原始字节缓冲（HEX 导出用）：超过上限时一次性回收，避免每包都搬移整块
             self._rx_raw.extend(chunk)
             if len(self._rx_raw) > config.RX_RAW_CAP:
-                del self._rx_raw[:len(self._rx_raw) - config.RX_RAW_CAP]
+                keep = config.RX_RAW_CAP // 8 * 7
+                del self._rx_raw[:len(self._rx_raw) - keep]
             # 实时波形（仅开启时采样，deque 有界）
             if self.btn_wave.isChecked():
                 self.wave_chart.add_samples(chunk)
@@ -936,8 +969,10 @@ class LecoSerial(QMainWindow):
             QMessageBox.warning(self, "错误", f"读取文件失败: {e}"); return
         if not data:
             return
-        # 整包交给 worker 线程写入，UI 不卡
-        self.worker.write(data)
+        # 分块入队：worker 单轮写入有上限，大文件发送期间接收不会停摆
+        step = config.SEND_CHUNK_SIZE
+        for i in range(0, len(data), step):
+            self.worker.write(data[i:i + step])
         self.tx_count += len(data)
         self.update_status()
         self.append_recv_text(f">>> 文件已发送: {os.path.basename(path)} ({len(data)} 字节)", config.TX_COLOR)
@@ -1104,18 +1139,22 @@ class LecoSerial(QMainWindow):
 
     def update_conn_label(self):
         if self._connected and self._connect_t0:
-            secs = int(time.time() - self._connect_t0)
-            self.lab_conn.setText(f"已连接 {time.strftime('%H:%M:%S', time.gmtime(secs))}")
-            self.dot.setObjectName("dotGreen")
+            secs = max(int(time.time() - self._connect_t0), 0)
+            h, rem = divmod(secs, 3600)
+            m, s = divmod(rem, 60)
+            self.lab_conn.setText(f"已连接 {h:02d}:{m:02d}:{s:02d}")
             self.lab_conn2.setText("已连接")
-            self.dot2.setObjectName("dotGreen")
+            state = "on"
         else:
             self.lab_conn.setText("未连接")
-            self.dot.setObjectName("dot")
             self.lab_conn2.setText("未连接")
-            self.dot2.setObjectName("dot")
-        st = self.dot.style(); st.unpolish(self.dot); st.polish(self.dot)
-        st = self.dot2.style(); st.unpolish(self.dot2); st.polish(self.dot2)
+            state = "off"
+        # 仅在状态切换时重刷 QSS，避免每秒 unpolish/polish 两个圆点
+        if state != self._dot_state:
+            self._dot_state = state
+            for d in (self.dot, self.dot2):
+                d.setObjectName("dotGreen" if state == "on" else "dot")
+                st = d.style(); st.unpolish(d); st.polish(d)
 
     def clear_count(self):
         self.rx_count = 0; self.tx_count = 0
@@ -1241,7 +1280,7 @@ class LecoSerial(QMainWindow):
                 self.append_recv_text(">>> 停止记录", config.TX_COLOR)
 
     def _log_dir(self):
-        d = os.path.join(os.getcwd(), "log")
+        d = os.path.join(config.app_dir(), "logs")
         try:
             os.makedirs(d, exist_ok=True)
         except Exception:
@@ -1297,7 +1336,7 @@ class LecoSerial(QMainWindow):
             QMessageBox.warning(self, "错误", f"导出失败: {e}")
 
     def show_about(self):
-        QMessageBox.about(self, "关于", f"{config.APP_NAME}\n版本 2.2\n\n"
+        QMessageBox.about(self, "关于", f"{config.APP_NAME}\n版本 {config.APP_VERSION}\n\n"
                           "串口调试助手：HEX/ASCII 收发、时间戳、定时发送、发送文件、\n"
                           "CRC16、DTR/RTS、ESP32 复位、预设命令、多条发送列表、\n"
                           "多编码、日志记录、设置记忆、速率显示、接收区查找\n\n"

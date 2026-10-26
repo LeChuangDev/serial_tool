@@ -22,3 +22,10 @@ dist/
 Thumbs.db
 .DS_Store
 *.log
+
+# 运行期日志目录
+logs/
+log/
+
+# 界面设计稿（设计工具工作区，按需保留）
+serial-tool-redesign/.preflight/

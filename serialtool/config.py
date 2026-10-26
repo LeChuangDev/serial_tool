@@ -7,9 +7,11 @@ from PyQt6.QtGui import QColor
 
 # ---- 应用信息 ----
 APP_NAME = "Leeco‑Serial 樂創串口调试终端"
+APP_VERSION = "2.2"          # 顶部徽标与"关于"统一引用
 WINDOW_WIDTH = 1040
 WINDOW_HEIGHT = 720
-APP_ICON_NAME = "app.ico"   # 多尺寸 ICO：窗口/任务栏与打包 exe 通用
+APP_ICON_NAME = os.path.join("assets", "app.ico")   # 多尺寸 ICO：窗口/任务栏与打包 exe 通用
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ---- 波特率 ----
 BAUD_RATES = ["9600", "115200", "38400", "57600", "256000", "512000", "460800", "921600"]
@@ -30,6 +32,7 @@ ERROR_COLOR = QColor("#f5222d")
 READ_CHUNK_SIZE = 4096      # 单次 read 最大字节
 READ_TIMEOUT = 0.05         # 阻塞读超时（秒）
 WRITE_TIMEOUT = 2.0         # 写超时，防止流控挂起导致关闭卡死
+SEND_CHUNK_SIZE = 4096      # 发送文件分块大小（避免单次巨量写入卡住线程）
 AGG_BYTES = 4096            # 接收聚合阈值（字节）
 AGG_INTERVAL = 0.05         # 接收聚合阈值（秒）
 MAX_BLOCKS = 10000          # 接收区最大显示行数（超出自动丢最旧）
@@ -83,7 +86,14 @@ MULTISEND_KEYS = ["multisend_used", "multisend_text", "multisend_delay"]
 
 
 def resource_path(relative_path):
-    """基于本模块所在目录解析资源，避免依赖启动目录（cwd）导致图标等找不到。"""
+    """基于项目根目录解析资源（打包时基于 _MEIPASS），避免依赖启动目录。"""
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+    return os.path.join(PROJECT_ROOT, relative_path)
+
+
+def app_dir():
+    """可写文件（日志等）的基准目录：打包后为 exe 所在目录，源码运行时为项目根。"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return PROJECT_ROOT

@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (
     QPushButton, QRadioButton, QCheckBox, QTabWidget, QMessageBox,
 )
 
-import styles
-import utils
+from . import styles
+from . import utils
 
 
 class ToolsDialog(QDialog):

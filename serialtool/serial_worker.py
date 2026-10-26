@@ -6,7 +6,7 @@ import time
 import serial
 from PyQt6.QtCore import QThread, pyqtSignal
 
-import config
+from . import config
 
 
 class SerialWorker(QThread):
@@ -20,6 +20,7 @@ class SerialWorker(QThread):
     connected = pyqtSignal(str)        # "port @ baud"
     disconnected = pyqtSignal(str)     # 关闭原因
     error = pyqtSignal(str)            # 打开失败 / 读异常 / 命令执行失败
+    lines_state = pyqtSignal(bool, bool)   # 打开端口后的实际 DTR / RTS 电平
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -55,6 +56,14 @@ class SerialWorker(QThread):
 
     def set_rts(self, on):
         self._cmd_queue.put(("rts", bool(on)))
+
+    def clear_cmds(self):
+        """丢弃未执行的命令（断开时调用：避免残留写入在下次连接时误发）。"""
+        while True:
+            try:
+                self._cmd_queue.get_nowait()
+            except queue.Empty:
+                return
 
     def stop(self, timeout=2.0):
         """请求停止并等待线程结束（期间端口被释放，可安全重开）。"""
@@ -107,6 +116,11 @@ class SerialWorker(QThread):
                 pass
             self.connected.emit(f"{self._port} @ {self._baud}")
             announced = True
+            try:
+                # pyserial 打开端口时默认断言 DTR/RTS，把实际电平同步给界面
+                self.lines_state.emit(bool(ser.dtr), bool(ser.rts))
+            except Exception:
+                pass
 
             # 接收循环：命令 → 阻塞读 → 聚合发信号
             packets = []
@@ -115,8 +129,10 @@ class SerialWorker(QThread):
             batch_start = 0.0
             err_backoff = 0.0
             while not self._stop.is_set():
-                # 1) 优先执行命令队列
-                while True:
+                # 1) 优先执行命令队列；单轮写入量有上限，保证大文件发送时
+                #    接收仍能持续进行（不会整包写完才读一次）
+                wrote = 0
+                while wrote < config.SEND_CHUNK_SIZE:
                     try:
                         kind, payload = self._cmd_queue.get_nowait()
                     except queue.Empty:
@@ -124,6 +140,7 @@ class SerialWorker(QThread):
                     try:
                         if kind == "write":
                             ser.write(payload)
+                            wrote += len(payload)
                         elif kind == "dtr":
                             ser.dtr = payload
                         elif kind == "rts":
