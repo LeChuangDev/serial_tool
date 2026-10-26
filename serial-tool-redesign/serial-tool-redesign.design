@@ -1,0 +1,68 @@
+{
+  "data": [
+    {
+      "id": "page-serial-idle",
+      "title": "串口终端 · 未连接",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1792972999619,
+      "canvasData": {
+        "x": 540,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-58f0b0cd",
+          "measuredAt": 1792973845123
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/serial-idle.html",
+        "interactions": [
+          {
+            "domId": "btn-connect",
+            "targetPageId": "page-serial-live",
+            "hideEdge": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-serial-live",
+      "title": "串口终端 · 已连接",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1792972999619,
+      "canvasData": {
+        "x": 60,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-53ae80c0",
+          "measuredAt": 1792973845123
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/serial-live.html",
+        "interactions": [
+          {
+            "domId": "btn-disconnect",
+            "targetPageId": "page-serial-idle",
+            "hideEdge": false
+          }
+        ]
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "desktop",
+    "projectName": "串口调试终端 · 新界面",
+    "projectPath": "serial-tool-redesign"
+  }
+}

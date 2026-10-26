@@ -1,0 +1,81 @@
+/* ============================================================
+   串口调试终端 · 深蓝工业风 新界面配色系统
+   品牌前缀: srl (serial tool)
+   ============================================================ */
+
+:root {
+  --srl-background: #0b1018;
+  --srl-foreground: #dde5f0;
+  --srl-card: #131a26;
+  --srl-card-foreground: #dde5f0;
+  --srl-popover: #182130;
+  --srl-popover-foreground: #dde5f0;
+  --srl-primary: #2f6bff;
+  --srl-primary-foreground: #ffffff;
+  --srl-muted: #1a2332;
+  --srl-muted-foreground: #7c8798;
+  --srl-border: #232e3f;
+  --srl-input: #1a2332;
+  --srl-ring: #4a8cff;
+  --srl-destructive: #ef4a4e;
+  --srl-destructive-foreground: #ffffff;
+
+  --srl-radius-sm: 6px;
+  --srl-radius-md: 10px;
+  --srl-radius-lg: 16px;
+
+  --state-success: #3fb950;
+  --state-warning: #e6a23c;
+  --state-error: #ef4a4e;
+  --state-info: #4a8cff;
+
+  --chart-rx: #2f6bff;
+  --chart-tx: #e6a23c;
+  --chart-wave: #4a8cff;
+
+  --font-mono: "JetBrains Mono", "Consolas", "Cascadia Mono", monospace;
+}
+
+@theme inline {
+  --color-background: var(--srl-background);
+  --color-foreground: var(--srl-foreground);
+  --color-card: var(--srl-card);
+  --color-card-foreground: var(--srl-card-foreground);
+  --color-popover: var(--srl-popover);
+  --color-popover-foreground: var(--srl-popover-foreground);
+  --color-primary: var(--srl-primary);
+  --color-primary-foreground: var(--srl-primary-foreground);
+  --color-muted: var(--srl-muted);
+  --color-muted-foreground: var(--srl-muted-foreground);
+  --color-border: var(--srl-border);
+  --color-input: var(--srl-input);
+  --color-ring: var(--srl-ring);
+  --color-destructive: var(--srl-destructive);
+  --color-destructive-foreground: var(--srl-destructive-foreground);
+
+  --radius-sm: var(--srl-radius-sm);
+  --radius-md: var(--srl-radius-md);
+  --radius-lg: var(--srl-radius-lg);
+}
+
+/* 语义回退层（无 Tailwind 时也保持明确定义） */
+#semantic-token-fallback {
+  --background: var(--srl-background);
+  --foreground: var(--srl-foreground);
+  --card: var(--srl-card);
+  --card-foreground: var(--srl-card-foreground);
+  --popover: var(--srl-popover);
+  --popover-foreground: var(--srl-popover-foreground);
+  --primary: var(--srl-primary);
+  --primary-foreground: var(--srl-primary-foreground);
+  --muted: var(--srl-muted);
+  --muted-foreground: var(--srl-muted-foreground);
+  --border: var(--srl-border);
+  --input: var(--srl-input);
+  --ring: var(--srl-ring);
+  --destructive: var(--srl-destructive);
+  --destructive-foreground: var(--srl-destructive-foreground);
+  --radius-sm: var(--srl-radius-sm);
+  --radius-md: var(--srl-radius-md);
+  --radius-lg: var(--srl-radius-lg);
+}
