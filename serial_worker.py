@@ -37,6 +37,14 @@ class SerialWorker(QThread):
         self._stopbits = stop
         self._parity = parity
         self._warned_read_error = False
+        # 上一轮线程可能仍在收尾（如"连接中"被断开、大包写入中）：先停干净。
+        # 否则 QThread.start() 对运行中的线程无效，表现为点了连接一直连不上。
+        if self.isRunning():
+            self.stop()
+            if self.isRunning():
+                self.error.emit(f"串口线程仍在收尾，请稍后重试（{self._port}）")
+                return
+        self._stop.clear()      # 清掉上一轮遗留的停止标志，避免新线程启动即退出
         self.start()
 
     def write(self, data):
@@ -57,11 +65,17 @@ class SerialWorker(QThread):
                 ser.cancel_read()
             except Exception:
                 pass
-        self.wait(timeout)
+        # 轮询等待线程结束。不使用 QThread.wait()：在 Python3.14 + PyQt6 环境下，
+        # wait() 在线程收尾返回的瞬间会触发原生崩溃（0xC0000409）。
+        # cancel_read 后读超时必然很快返回，线程随即退出，轮询即可安全等完。
+        deadline = time.time() + timeout
+        while not self.isFinished() and time.time() < deadline:
+            time.sleep(0.005)
 
     # ---------- 后台线程 ----------
     def run(self):
         ser = None
+        announced = False       # 是否真正连上过：只有连上过才发"已断开"，避免打开失败时误报
         try:
             # 打开阶段：后台重试 5 次，不阻塞 UI
             last_err = ""
@@ -92,12 +106,14 @@ class SerialWorker(QThread):
             except Exception:
                 pass
             self.connected.emit(f"{self._port} @ {self._baud}")
+            announced = True
 
             # 接收循环：命令 → 阻塞读 → 聚合发信号
             packets = []
             times = []
             buf_len = 0
             batch_start = 0.0
+            err_backoff = 0.0
             while not self._stop.is_set():
                 # 1) 优先执行命令队列
                 while True:
@@ -117,6 +133,7 @@ class SerialWorker(QThread):
                 # 2) 阻塞读（timeout 内返回，线程休眠不占 CPU）
                 try:
                     chunk = ser.read(config.READ_CHUNK_SIZE)
+                    err_backoff = 0.0
                 except serial.SerialException as e:
                     # 去重告警一次，不中断循环：保留"拔出不断开"语义
                     # （避免 ESP32 复位时设备短暂消失被误判为断开）
@@ -125,6 +142,9 @@ class SerialWorker(QThread):
                         self.error.emit(f"串口读取异常: {e}")
                     if self._stop.is_set():
                         break
+                    # 设备拔出后 read 会立即抛异常，必须退避，否则空转打满 CPU
+                    err_backoff = min(err_backoff * 2 or 0.02, 0.4)
+                    time.sleep(err_backoff)
                     continue
                 if chunk:
                     if not packets:
@@ -151,4 +171,5 @@ class SerialWorker(QThread):
                     pass
             self._ser = None
             self._stop.clear()
-            self.disconnected.emit("串口已断开")
+            if announced:
+                self.disconnected.emit("串口已断开")

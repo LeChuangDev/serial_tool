@@ -20,7 +20,9 @@ PARITY_MAP = {"None": serial.PARITY_NONE, "Even": serial.PARITY_EVEN,
               "Odd": serial.PARITY_ODD}
 
 # ---- 颜色 ----
-RECV_COLOR = QColor("#3478d8")
+# 接收区为深色底（#0b1018）：正文用浅灰白保证对比度，时间戳用弱化灰
+RECV_COLOR = QColor("#dde5f0")
+TIME_COLOR = QColor("#7c8798")
 TX_COLOR = QColor("#e6a23c")
 ERROR_COLOR = QColor("#f5222d")
 
@@ -31,6 +33,7 @@ WRITE_TIMEOUT = 2.0         # 写超时，防止流控挂起导致关闭卡死
 AGG_BYTES = 4096            # 接收聚合阈值（字节）
 AGG_INTERVAL = 0.05         # 接收聚合阈值（秒）
 MAX_BLOCKS = 10000          # 接收区最大显示行数（超出自动丢最旧）
+LINE_BUF_CAP = 64 * 1024    # "按行"模式下无换行数据的缓冲上限（超出强制输出）
 
 # ---- 其他 ----
 HISTORY_MAX = 20            # 发送历史最多保留条数
@@ -55,6 +58,12 @@ RECV_THEME_STYLE = {
         "border:1px solid #1f2b1f;border-radius:6px;padding:6px;"
         "selection-background-color:#1d3a22;}"
     ),
+}
+
+# 接收区正文颜色（与 QSS 背景配套；正文由代码显式设置字符格式，需与主题同步）
+RECV_THEME_TEXT = {
+    RECV_THEME_BLUE: QColor("#dde5f0"),
+    RECV_THEME_GREEN: QColor("#39d353"),
 }
 
 # ---- 统计 / 速率图 ----

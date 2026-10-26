@@ -1,4 +1,5 @@
 # ====================== 主程序窗口 ======================
+import codecs
 import datetime
 import os
 import time
@@ -174,10 +175,12 @@ class LecoSerial(QMainWindow):
         self._log_date = None          # 当前日志文件对应的日期（按日滚动）
         self._rx_raw = bytearray()     # 接收原始字节缓冲（HEX 导出用，超限丢最旧）
         self.line_buf = ""
+        self._decoder = None           # 增量解码器：避免多字节字符被包边界截断成乱码
         self._updating_history = False
         self._font_size = config.DEFAULT_FONT_SIZE
         self._recv_theme = config.RECV_THEME_BLUE
         self._ms_looping = False
+        self._ms_loop_idx = 0
         self.qs = QSettings("Leeco", "SerialTool")
 
         # ---------- 定时器 ----------
@@ -188,6 +191,10 @@ class LecoSerial(QMainWindow):
         self._reset_timer.setSingleShot(True)
         self._reset_timer.timeout.connect(self._on_reset_tick)
         self._reset_step = 0
+        # 多条发送循环：用成员定时器驱动，停止时能真正取消（singleShot 链无法取消）
+        self._ms_loop_timer = QTimer(self)
+        self._ms_loop_timer.setSingleShot(True)
+        self._ms_loop_timer.timeout.connect(self._ms_loop_tick)
 
         # ---------- 串口工作线程 ----------
         self.worker = SerialWorker(self)
@@ -236,6 +243,9 @@ class LecoSerial(QMainWindow):
         self.btn_ms_loop.clicked.connect(self.ms_loop)
         # 接收区
         self.recv_box.font_delta.connect(self.change_font_size)
+        # 切换编码 / HEX 显示时丢弃解码器残留，避免半个字符串到下一段
+        self.cb_encoding.currentIndexChanged.connect(lambda _: self._reset_decoder())
+        self.ck_hex.toggled.connect(lambda _: self._reset_decoder())
 
         self.refresh_port_list()
         self.load_settings()
@@ -652,8 +662,12 @@ class LecoSerial(QMainWindow):
         self.btn_timer.setChecked(False)
         self._reset_timer.stop()
         self._ms_stop_loop()
-        if self._connected:
+        # 只要线程在跑就停，包含"连接中"的重试阶段：
+        # 否则此时断开/关窗会留下仍在运行的 QThread（进程退出时 Qt 致命退出），
+        # 且线程随后成功打开串口会把界面改成"已连接"。
+        if self.worker.isRunning():
             self.worker.stop()
+        if self._connected:
             print("【日志】串口已关闭")
 
     def open_port(self, port, baud, bits, stop, par):
@@ -714,10 +728,11 @@ class LecoSerial(QMainWindow):
     def on_connected(self, info):
         self._connected = True
         self._connect_t0 = time.time()
+        self._reset_decoder()          # 新会话不拼接上一次的残留字符
         self.restyle_link_btn("danger")
         self.ck_dtr.setEnabled(True); self.ck_rts.setEnabled(True)
         self.lab_port.setText(f"{self.current_port} @ {self.current_baud}")
-        self.append_recv_text(f"= 串口已连接 {info} =", config.RECV_COLOR)
+        self.append_recv_text(f"= 串口已连接 {info} =", self._recv_text_color())
         self.update_status()
         self.update_conn_label()
 
@@ -729,7 +744,7 @@ class LecoSerial(QMainWindow):
         self.restyle_link_btn("primary")
         self.ck_dtr.setEnabled(False); self.ck_rts.setEnabled(False)
         self.lab_port.setText("")
-        self.append_recv_text(f"= {reason} =", config.RECV_COLOR)
+        self.append_recv_text(f"= {reason} =", self._recv_text_color())
         self.update_status()
         self.update_conn_label()
 
@@ -766,12 +781,28 @@ class LecoSerial(QMainWindow):
                 self.recv_box.clear()
             self.append_recv_batch(texts)
 
+    def _reset_decoder(self):
+        """丢弃解码器内部残留的半个多字节字符（切换编码 / 清屏 / 重连时调用）。"""
+        self._decoder = None
+        self.line_buf = ""
+
+    def _recv_text_color(self):
+        """接收区正文颜色跟随当前配色主题（深色底用浅色字，保证对比度）。"""
+        return config.RECV_THEME_TEXT.get(self._recv_theme, config.RECV_COLOR)
+
     def format_received(self, buf):
         if self.ck_hex.isChecked():
             return utils.hex_str(buf)
-        text = buf.decode(self.encoding, errors="replace")
+        # 增量解码：多字节字符被包边界切开时留在解码器里，下个包接着拼
+        if self._decoder is None:
+            self._decoder = codecs.getincrementaldecoder(self.encoding)(errors="replace")
+        text = self._decoder.decode(buf)
         if self.cb_break.currentText().startswith("按行"):
             self.line_buf += text
+            if len(self.line_buf) > config.LINE_BUF_CAP:
+                # 长行保护：设备一直不发换行时强制输出，避免缓冲无限增长
+                out, self.line_buf = self.line_buf, ""
+                return out
             if "\n" in self.line_buf:
                 parts = self.line_buf.split("\n")
                 self.line_buf = parts.pop()
@@ -779,36 +810,51 @@ class LecoSerial(QMainWindow):
             return ""
         return text
 
+    def _follow_tail(self):
+        """接收区当前是否停在底部：用户向上翻历史时不强行拉回。"""
+        sb = self.recv_box.verticalScrollBar()
+        return sb.value() >= sb.maximum() - 4
+
     def append_recv_batch(self, texts):
         """批量渲染：一次光标操作插入整批文本，减少重排。"""
         if not texts:
             return
+        follow = self._follow_tail()
         cursor = self.recv_box.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        fmt = cursor.charFormat(); fmt.setForeground(config.RECV_COLOR)
-        cursor.setCharFormat(fmt)
+        # 分别取副本：QTextCharFormat 在 Python 中赋值是同一对象，共用会互相覆盖颜色
+        fmt = cursor.charFormat(); fmt.setForeground(self._recv_text_color())
+        ts_fmt = cursor.charFormat(); ts_fmt.setForeground(config.TIME_COLOR)
         time_checked = self.ck_time.isChecked()
         for text, ts in texts:
             if time_checked:
                 t = QDateTime.fromMSecsSinceEpoch(int(ts * 1000)).toString("HH:mm:ss.zzz")
+                cursor.setCharFormat(ts_fmt)
                 cursor.insertText(f"[{t}] ")
+            cursor.setCharFormat(fmt)
             cursor.insertText(text.rstrip("\n") + "\n")
-        self.recv_box.setTextCursor(cursor)
-        self.recv_box.ensureCursorVisible()
+        if follow:
+            self.recv_box.setTextCursor(cursor)
+            self.recv_box.ensureCursorVisible()
 
     def append_recv_text(self, text, color: QColor):
         """单行追加（TX 回显 / 状态提示用）。"""
         if not text:
             return
+        follow = self._follow_tail()
         cursor = self.recv_box.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        fmt = cursor.charFormat(); fmt.setForeground(color); cursor.setCharFormat(fmt)
+        fmt = cursor.charFormat(); fmt.setForeground(color)
+        ts_fmt = cursor.charFormat(); ts_fmt.setForeground(config.TIME_COLOR)
         if self.ck_time.isChecked():
             t = QDateTime.currentDateTime().toString("HH:mm:ss.zzz")
+            cursor.setCharFormat(ts_fmt)
             cursor.insertText(f"[{t}] ")
+        cursor.setCharFormat(fmt)
         cursor.insertText(text.rstrip("\n") + "\n")
-        self.recv_box.setTextCursor(cursor)
-        self.recv_box.ensureCursorVisible()
+        if follow:
+            self.recv_box.setTextCursor(cursor)
+            self.recv_box.ensureCursorVisible()
 
     @property
     def encoding(self):
@@ -951,20 +997,28 @@ class LecoSerial(QMainWindow):
             self.btn_ms_loop.setChecked(False)
             return
         self._ms_looping = True
+        self._ms_loop_idx = 0
         self.btn_ms_loop.setText("停止循环")
-        self._ms_loop_iter(rows, 0)
+        self._ms_loop_tick()
 
-    def _ms_loop_iter(self, rows, idx):
+    def _ms_loop_tick(self):
+        """循环发送一步：用成员定时器链，_ms_stop_loop() 能确定性取消。"""
         if not self._ms_looping or not self._connected:
             self._ms_stop_loop()
             return
+        rows = self._ms_checked_rows()
+        if not rows:
+            self._ms_stop_loop()
+            return
+        idx = self._ms_loop_idx % len(rows)
+        self._ms_loop_idx = idx + 1
         text, delay = rows[idx]
         self.do_send_text(text, False)
-        nxt = (idx + 1) % len(rows)
-        QTimer.singleShot(max(delay, 0), lambda: self._ms_loop_iter(rows, nxt))
+        self._ms_loop_timer.start(max(delay, 1))
 
     def _ms_stop_loop(self):
         self._ms_looping = False
+        self._ms_loop_timer.stop()
         self.btn_ms_loop.setChecked(False)
         self.btn_ms_loop.setText("循环发送")
 
@@ -972,24 +1026,23 @@ class LecoSerial(QMainWindow):
     #  复位 / 定时 / 速率 / 信号 / 日志
     # =========================================================
     def reset_target(self):
-        """ESP32 复位：RTS 低电平脉冲（多数开发板 EN 经三极管接 RTS）
+        """ESP32 复位：RTS 断言（=低电平，多数板 EN 经三极管接 RTS）保持 150ms 后释放。
         若你的板子 EN 接的是 DTR，把下面所有 rts 换成 dtr。
         用 QTimer 分步执行，UI 不阻塞。"""
         if not self._connected:
             QMessageBox.warning(self, "提示", "请先打开串口"); return
         self._reset_timer.stop()
         self._reset_step = 0
-        self.append_recv_text("= 复位脉冲: RTS 低 150ms =", config.TX_COLOR)
-        self.worker.set_rts(True)
-        self._reset_timer.start(50)
+        self.append_recv_text("= 复位脉冲：RTS 低电平 150ms =", config.TX_COLOR)
+        self.worker.set_rts(True)       # 拉低 → 进入复位
+        self._reset_timer.start(150)
 
     def _on_reset_tick(self):
         self._reset_step += 1
         if self._reset_step == 1:
-            self.worker.set_rts(False)
-            self._reset_timer.start(150)
-        elif self._reset_step == 2:
-            self.worker.set_rts(True)
+            # 释放复位并恢复用户勾选的 RTS 状态：
+            # 不能残留断言，否则芯片被一直按在复位里
+            self.worker.set_rts(self.ck_rts.isChecked())
             self._reset_timer.stop()
 
     def toggle_timer_send(self):
@@ -1076,6 +1129,7 @@ class LecoSerial(QMainWindow):
         self.recv_box.clear()
         self.wave_chart.clear()
         self._rx_raw.clear()
+        self._reset_decoder()
 
     def on_wave_toggled(self, checked):
         self.wave_chart.setVisible(checked)
