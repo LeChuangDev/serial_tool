@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QComboBox, QCheckBox, QRadioButton, QLineEdit, QPlainTextEdit,
     QMessageBox, QFileDialog, QFrame, QSplitter, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMenu, QAbstractItemView, QApplication,
+    QHeaderView, QMenu, QAbstractItemView,
 )
 
 from . import config
@@ -184,6 +184,10 @@ class LecoSerial(QMainWindow):
         self._port_set = set()         # 上次扫描到的串口集合（热插拔比对）
         self._port_missing = False     # 已提示过"串口拔出"，避免每 2s 刷屏
         self._dot_state = None         # 上次状态点样式（仅变化时重刷）
+        self._sending_file = False     # 文件发送中（防重入）
+        self._file_send = None         # 正在发送的文件句柄
+        self._file_path = ""
+        self._file_total = 0
         self.qs = QSettings("Leeco", "SerialTool")
 
         # ---------- 定时器 ----------
@@ -198,6 +202,10 @@ class LecoSerial(QMainWindow):
         self._ms_loop_timer = QTimer(self)
         self._ms_loop_timer.setSingleShot(True)
         self._ms_loop_timer.timeout.connect(self._ms_loop_tick)
+        # 文件发送泵：定时向写队列补水，避免大文件占满内存或阻塞调用栈
+        self._file_timer = QTimer(self)
+        self._file_timer.setInterval(5)
+        self._file_timer.timeout.connect(self._pump_file_send)
 
         # ---------- 串口工作线程 ----------
         self.worker = SerialWorker(self)
@@ -666,6 +674,8 @@ class LecoSerial(QMainWindow):
         self.btn_timer.setChecked(False)
         self._reset_timer.stop()
         self._ms_stop_loop()
+        if self._sending_file:
+            self._finish_file_send(interrupted=True)   # 关闭文件句柄并复位状态
         # 只要线程在跑就停，包含"连接中"的重试阶段：
         # 否则此时断开/关窗会留下仍在运行的 QThread（进程退出时 Qt 致命退出），
         # 且线程随后成功打开串口会把界面改成"已连接"。
@@ -772,6 +782,10 @@ class LecoSerial(QMainWindow):
         self.update_conn_label()
 
     def on_worker_error(self, msg):
+        if self._closing:
+            # 退出过程中不再弹模态框，否则会阻塞关闭
+            print(f"【警告】{msg}")
+            return
         if "串口打开失败" in msg:
             QMessageBox.warning(self, "串口错误", msg)
         else:
@@ -959,23 +973,71 @@ class LecoSerial(QMainWindow):
     def send_file(self):
         if not self._connected:
             QMessageBox.warning(self, "提示", "请先打开串口"); return
+        if self._sending_file:
+            self.show_tip("正在发送文件，请等待完成", 3000)
+            return
         path, _ = QFileDialog.getOpenFileName(self, "选择要发送的文件", "", "所有文件 (*)")
         if not path:
             return
         try:
-            with open(path, "rb") as f:
-                data = f.read()
+            f = open(path, "rb")
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"读取文件失败: {e}"); return
-        if not data:
+            QMessageBox.warning(self, "错误", f"读取文件失败: {e}")
             return
-        # 分块入队：worker 单轮写入有上限，大文件发送期间接收不会停摆
-        step = config.SEND_CHUNK_SIZE
-        for i in range(0, len(data), step):
-            self.worker.write(data[i:i + step])
-        self.tx_count += len(data)
-        self.update_status()
-        self.append_recv_text(f">>> 文件已发送: {os.path.basename(path)} ({len(data)} 字节)", config.TX_COLOR)
+        self._file_send = f
+        self._file_path = path
+        self._file_total = 0
+        self._sending_file = True
+        self.btn_sendfile.setEnabled(False)
+        self.append_recv_text(f">>> 开始发送文件: {os.path.basename(path)}", config.TX_COLOR)
+        # 异步泵送：send_file 立即返回，由定时器按队列水位持续补水
+        self._file_timer.start()
+        self._pump_file_send()
+
+    def _pump_file_send(self):
+        """按写队列水位分块喂数据（背压），不阻塞 UI、不整文件驻留内存。"""
+        if not self._sending_file:
+            self._file_timer.stop()
+            return
+        if self._closing or not self._connected:
+            self._finish_file_send(interrupted=True)
+            return
+        f = self._file_send
+        if f is None:
+            self._finish_file_send(interrupted=False)
+            return
+        try:
+            while self.worker.pending_writes() < config.SEND_QUEUE_LIMIT:
+                chunk = f.read(config.SEND_CHUNK_SIZE)
+                if not chunk:
+                    self._finish_file_send(interrupted=False)
+                    return
+                self.worker.write(chunk)
+                self._file_total += len(chunk)
+        except Exception as e:
+            print(f"【警告】文件发送失败: {e}")
+            self._finish_file_send(interrupted=True)
+
+    def _finish_file_send(self, interrupted=False):
+        self._file_timer.stop()
+        if self._file_send is not None:
+            try:
+                self._file_send.close()
+            except Exception:
+                pass
+        self._file_send = None
+        self._sending_file = False
+        self.btn_sendfile.setEnabled(True)
+        total = self._file_total
+        name = os.path.basename(self._file_path) if self._file_path else ""
+        if total:
+            self.tx_count += total
+            self.update_status()
+        if interrupted:
+            self.append_recv_text(
+                f">>> 文件发送中断: {name}（已入队 {total} 字节）", config.ERROR_COLOR)
+        elif total:
+            self.append_recv_text(f">>> 文件已发送: {name} ({total} 字节)", config.TX_COLOR)
 
     # =========================================================
     #  多条发送列表
@@ -1394,10 +1456,10 @@ class LecoSerial(QMainWindow):
         else:
             self.send_ascii.setChecked(True)
         self.edit_period.setText(self.qs.value("period", "100"))
-        self.btn_pause.setChecked(self.qs.value("ck_pause", False, type=bool))
+        # 注意：暂停状态与"记录到文件"不做持久化恢复。
+        # 否则上次在暂停时退出，下次启动界面正常但接收不刷新；或静默写入日志文件。
         for name, w in [("ck_hex", self.ck_hex), ("ck_time", self.ck_time),
                         ("ck_clear", self.ck_clear), ("ck_wrap", self.ck_wrap),
-                        ("ck_log", self.ck_log),
                         ("ck_newline", self.ck_newline), ("ck_echo", self.ck_echo),
                         ("ck_crc", self.ck_crc)]:
             w.setChecked(self.qs.value(name, False, type=bool))
@@ -1455,11 +1517,12 @@ class LecoSerial(QMainWindow):
         self.qs.setValue("period", self.edit_period.text())
         for name, w in [("ck_hex", self.ck_hex), ("ck_time", self.ck_time),
                         ("ck_clear", self.ck_clear), ("ck_wrap", self.ck_wrap),
-                        ("ck_log", self.ck_log),
                         ("ck_newline", self.ck_newline), ("ck_echo", self.ck_echo),
                         ("ck_crc", self.ck_crc)]:
             self.qs.setValue(name, w.isChecked())
-        self.qs.setValue("ck_pause", self.btn_pause.isChecked())
+        # 暂停 / 记录到文件属于"单次会话"状态，不写入配置（避免下次启动意外暂停或自动建日志）
+        self.qs.remove("ck_pause")
+        self.qs.remove("ck_log")
         self.qs.setValue("presets",
                          [self.cb_preset.itemText(i) for i in range(self.cb_preset.count())])
         # 接收区外观

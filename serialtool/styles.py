@@ -20,6 +20,8 @@ QComboBox QAbstractItemView{background-color:#182130;color:#dde5f0;
     selection-background-color:#2f6bff;outline:0;}
 QComboBox QAbstractItemView::item{height:26px;border-radius:4px;padding:0 6px;}
 QComboBox QAbstractItemView::item:hover{background-color:#1f2a3c;}
+QComboBox:disabled{color:#5a6270;background-color:#10151f;
+    border-color:#1c2432;}
 """
 
 # 卡片样式（QFrame#card）：渐变底板 + 顶部内高光 + 圆角，营造悬浮层次
@@ -89,6 +91,8 @@ QPushButton#tool{background-color:transparent;border:1px solid #2a3547;
 QPushButton#tool:hover{border-color:#4a8cff;color:#fff;
     background-color:#1a2332;}
 QPushButton#tool:checked{background-color:#2f6bff;border-color:#4a8cff;color:#fff;}
+QPushButton#tool:disabled,QPushButton#small:disabled{color:#5a6270;
+    border-color:#1c2432;background-color:transparent;}
 
 QLineEdit{background-color:#1a2332;
     border:1px solid #232e3f;border-radius:8px;color:#dde5f0;
@@ -101,16 +105,19 @@ QLineEdit:focus,QPlainTextEdit:focus,QTextEdit:focus{border-color:#4a8cff;}
 QLineEdit:disabled{color:#5a6270;background-color:#10151f;border-color:#1c2432;}
 
 QCheckBox{spacing:6px;font-size:13px;}
+QCheckBox:disabled,QRadioButton:disabled{color:#5a6270;}
 QCheckBox::indicator{width:15px;height:15px;border:1px solid #3d4a61;
     border-radius:4px;background-color:#1a2332;}
 QCheckBox::indicator:hover{border-color:#4a8cff;}
 QCheckBox::indicator:checked{background-color:#2f6bff;border-color:#4a8cff;}
+QCheckBox::indicator:disabled{background-color:#10151f;border-color:#1c2432;}
 QRadioButton{spacing:6px;font-size:13px;}
 QRadioButton::indicator{width:14px;height:14px;border:1px solid #3d4a61;
     border-radius:7px;background-color:#1a2332;}
 QRadioButton::indicator:hover{border-color:#4a8cff;}
 QRadioButton::indicator:checked{background-color:#2f6bff;
     border:4px solid #1a2332;}
+QRadioButton::indicator:disabled{background-color:#10151f;border-color:#1c2432;}
 
 QMenuBar{background:#0c1017;color:#dde5f0;padding:2px 6px;
     border-bottom:1px solid #1a2332;}
@@ -141,6 +148,7 @@ QTableWidget::indicator{width:15px;height:15px;border:1px solid #3d4a61;
     border-radius:4px;background-color:#1a2332;}
 QTableWidget::indicator:hover{border-color:#4a8cff;}
 QTableWidget::indicator:checked{background-color:#2f6bff;border-color:#4a8cff;}
+QTableWidget::indicator:disabled{background-color:#10151f;border-color:#1c2432;}
 QHeaderView::section{background-color:#1a2332;color:#7c8798;
     border:none;border-bottom:1px solid #232e3f;padding:4px 6px;
     font-size:12px;font-weight:600;}

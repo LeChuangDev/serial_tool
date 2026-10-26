@@ -39,18 +39,20 @@ class SerialWorker(QThread):
         self._stopbits = stop
         self._parity = parity
         self._warned_read_error = False
-        # 上一轮线程可能仍在收尾（如"连接中"被断开、大包写入中）：先停干净。
-        # 否则 QThread.start() 对运行中的线程无效，表现为点了连接一直连不上。
+        # 已在连接/断开过程中就不再重启线程：重复点击只会得到一条提示，
+        # 避免出现"停掉正在重试的线程 → 再重启"的多余连接循环。
         if self.isRunning():
-            self.stop()
-            if self.isRunning():
-                self.error.emit(f"串口线程仍在收尾，请稍后重试（{self._port}）")
-                return
+            self.error.emit(f"正在连接/断开中，请稍候再试（{self._port}）")
+            return
         self._stop.clear()      # 清掉上一轮遗留的停止标志，避免新线程启动即退出
         self.start()
 
     def write(self, data):
         self._cmd_queue.put(("write", data))
+
+    def pending_writes(self):
+        """当前排队待写的块数（供发送文件时做背压，避免内存膨胀）。"""
+        return self._cmd_queue.qsize()
 
     def set_dtr(self, on):
         self._ctrl_queue.put(("dtr", bool(on)))

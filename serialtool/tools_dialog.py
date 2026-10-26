@@ -141,14 +141,19 @@ class ToolsDialog(QDialog):
         b1.clicked.connect(self.hex_to_ascii)
         b2 = QPushButton("ASCII → HEX"); b2.clicked.connect(self.ascii_to_hex)
         b3 = QPushButton("清空"); b3.setObjectName("tool")
+        b3.clicked.connect(self.clear_convert)
         h.addWidget(b1); h.addWidget(b2); h.addStretch(); h.addWidget(b3)
         v.addLayout(h)
 
         v.addWidget(QLabel("ASCII："))
         self.cv_ascii = QPlainTextEdit()
         v.addWidget(self.cv_ascii, 1)
-        b3.clicked.connect(self.cv_ascii.clear)
         return w
+
+    def clear_convert(self):
+        """清空转换页的两个输入框（按钮文案为"清空"，两栏都清）。"""
+        self.cv_hex.clear()
+        self.cv_ascii.clear()
 
     def hex_to_ascii(self):
         data, err = utils.parse_hex(self.cv_hex.toPlainText())

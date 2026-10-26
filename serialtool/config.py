@@ -33,6 +33,7 @@ READ_CHUNK_SIZE = 4096      # 单次 read 最大字节
 READ_TIMEOUT = 0.05         # 阻塞读超时（秒）
 WRITE_TIMEOUT = 2.0         # 写超时，防止流控挂起导致关闭卡死
 SEND_CHUNK_SIZE = 4096      # 发送文件分块大小（避免单次巨量写入卡住线程）
+SEND_QUEUE_LIMIT = 512      # 文件发送时写队列最大积压块数（背压，约 2MB）
 AGG_BYTES = 4096            # 接收聚合阈值（字节）
 AGG_INTERVAL = 0.05         # 接收聚合阈值（秒）
 MAX_BLOCKS = 10000          # 接收区最大显示行数（超出自动丢最旧）

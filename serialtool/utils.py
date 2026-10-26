@@ -16,7 +16,7 @@ def parse_hex(text):
             v = int(x, 16)
         except ValueError:
             return None, f"第 {i + 1} 个元素 '{x}' 不是合法十六进制"
-        if v > 0xFF:
+        if v < 0 or v > 0xFF:
             return None, f"第 {i + 1} 个元素 '{x}' 超出单字节范围 (00-FF)"
     return bytes(int(x, 16) for x in parts), None
 
