@@ -1063,22 +1063,29 @@ class LecoSerial(QMainWindow):
     def reset_target(self):
         """ESP32 复位：RTS 断言（=低电平，多数板 EN 经三极管接 RTS）保持 150ms 后释放。
         若你的板子 EN 接的是 DTR，把下面所有 rts 换成 dtr。
-        用 QTimer 分步执行，UI 不阻塞。"""
+        分步由 QTimer 驱动，UI 不阻塞。"""
         if not self._connected:
             QMessageBox.warning(self, "提示", "请先打开串口"); return
         self._reset_timer.stop()
         self._reset_step = 0
         self.append_recv_text("= 复位脉冲：RTS 低电平 150ms =", config.TX_COLOR)
-        self.worker.set_rts(True)       # 拉低 → 进入复位
-        self._reset_timer.start(150)
+        # 先释放：RTS 已勾选（一直是低电平）时也能产生一次真实跳变
+        self.worker.set_rts(False)
+        self._reset_timer.start(50)
 
     def _on_reset_tick(self):
         self._reset_step += 1
         if self._reset_step == 1:
-            # 释放复位并恢复用户勾选的 RTS 状态：
-            # 不能残留断言，否则芯片被一直按在复位里
-            self.worker.set_rts(self.ck_rts.isChecked())
+            self.worker.set_rts(True)       # 拉低 → 进入复位
+            self.append_recv_text("= RTS 断言（低）→ 复位中 =", config.TX_COLOR)
+            self._reset_timer.start(150)
+        elif self._reset_step == 2:
+            self.worker.set_rts(False)      # 释放 → 芯片启动
+            self.append_recv_text("= RTS 释放（高）→ 启动 =", config.TX_COLOR)
             self._reset_timer.stop()
+            if self.ck_rts.isChecked():
+                # 硬件已释放，勾选状态同步取消，避免"按钮显示断言、实际已释放"
+                self.ck_rts.setChecked(False)
 
     def toggle_timer_send(self):
         if self.send_timer.isActive():

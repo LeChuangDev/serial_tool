@@ -24,7 +24,8 @@ class SerialWorker(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._cmd_queue = queue.Queue()
+        self._cmd_queue = queue.Queue()      # 数据写入（可分块排队）
+        self._ctrl_queue = queue.Queue()     # DTR/RTS 控制：优先于数据写入处理
         self._stop = threading.Event()
         self._ser = None
         self._warned_read_error = False
@@ -52,18 +53,19 @@ class SerialWorker(QThread):
         self._cmd_queue.put(("write", data))
 
     def set_dtr(self, on):
-        self._cmd_queue.put(("dtr", bool(on)))
+        self._ctrl_queue.put(("dtr", bool(on)))
 
     def set_rts(self, on):
-        self._cmd_queue.put(("rts", bool(on)))
+        self._ctrl_queue.put(("rts", bool(on)))
 
     def clear_cmds(self):
         """丢弃未执行的命令（断开时调用：避免残留写入在下次连接时误发）。"""
-        while True:
-            try:
-                self._cmd_queue.get_nowait()
-            except queue.Empty:
-                return
+        for q in (self._ctrl_queue, self._cmd_queue):
+            while True:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
 
     def stop(self, timeout=2.0):
         """请求停止并等待线程结束（期间端口被释放，可安全重开）。"""
@@ -129,25 +131,32 @@ class SerialWorker(QThread):
             batch_start = 0.0
             err_backoff = 0.0
             while not self._stop.is_set():
-                # 1) 优先执行命令队列；单轮写入量有上限，保证大文件发送时
-                #    接收仍能持续进行（不会整包写完才读一次）
-                wrote = 0
-                while wrote < config.SEND_CHUNK_SIZE:
+                # 1) 信号线控制优先：文件发送期间复位脉冲也能立即生效
+                while True:
                     try:
-                        kind, payload = self._cmd_queue.get_nowait()
+                        kind, payload = self._ctrl_queue.get_nowait()
                     except queue.Empty:
                         break
                     try:
-                        if kind == "write":
-                            ser.write(payload)
-                            wrote += len(payload)
-                        elif kind == "dtr":
+                        if kind == "dtr":
                             ser.dtr = payload
                         elif kind == "rts":
                             ser.rts = payload
                     except Exception as e:
                         self.error.emit(f"命令执行失败: {e}")
-                # 2) 阻塞读（timeout 内返回，线程休眠不占 CPU）
+                # 2) 数据写入：单轮有上限，保证大文件发送时接收仍能持续进行
+                wrote = 0
+                while wrote < config.SEND_CHUNK_SIZE:
+                    try:
+                        payload = self._cmd_queue.get_nowait()[1]
+                    except queue.Empty:
+                        break
+                    try:
+                        ser.write(payload)
+                        wrote += len(payload)
+                    except Exception as e:
+                        self.error.emit(f"命令执行失败: {e}")
+                # 3) 阻塞读（timeout 内返回，线程休眠不占 CPU）
                 try:
                     chunk = ser.read(config.READ_CHUNK_SIZE)
                     err_backoff = 0.0
