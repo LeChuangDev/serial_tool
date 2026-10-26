@@ -39,7 +39,8 @@ QLabel#cardTitle{color:#dde5f0;font-size:13px;font-weight:600;
 GLOBAL_QSS = """
 QMainWindow,QDialog{background-color:qlineargradient(x1:0,y1:0,x2:0,y2:1,
     stop:0 #0c1119,stop:1 #090c12);}
-QWidget{color:#dde5f0;font-family:Microsoft YaHei;}
+QWidget{color:#dde5f0;
+    font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC","Source Han Sans SC",sans-serif;}
 
 QTabWidget::pane{border:1px solid #232e3f;border-radius:8px;
     background-color:#131a26;top:-1px;}
@@ -54,10 +55,12 @@ QLabel#sectionTitle{color:#dde5f0;font-size:13px;font-weight:600;
     letter-spacing:1px;border-left:3px solid #2f6bff;padding-left:8px;}
 QLabel#dot{background-color:#4a5160;border:1px solid #5a6270;border-radius:4px;}
 QLabel#dotGreen{background-color:#3fb950;border:1px solid #56d96a;border-radius:4px;}
-QLabel#portChip{color:#7c8798;font-size:12px;font-family:Consolas,monospace;}
+QLabel#portChip{color:#7c8798;font-size:12px;
+    font-family:"JetBrains Mono","Consolas","Cascadia Mono",monospace;}
 QLabel#brandTitle{color:#dde5f0;font-size:13px;font-weight:600;
     letter-spacing:1px;padding:0 16px 0 6px;background:transparent;}
-QLabel#brandVer{color:#7c8798;font-size:12px;font-family:Consolas,monospace;
+QLabel#brandVer{color:#7c8798;font-size:12px;
+    font-family:"JetBrains Mono","Consolas","Cascadia Mono",monospace;
     padding:0 10px 0 0;background:transparent;}
 QFrame#hsep{background-color:#1c2432;border:none;min-height:1px;max-height:1px;}
 

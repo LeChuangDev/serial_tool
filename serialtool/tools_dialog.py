@@ -49,8 +49,10 @@ class ToolsDialog(QDialog):
         v.addLayout(row)
 
         row2 = QHBoxLayout(); row2.setSpacing(12)
-        self.cs_crc8 = QCheckBox("CRC8"); self.cs_crc8.setChecked(True)
+        self.cs_crc8 = QCheckBox("CRC8 (0x07)"); self.cs_crc8.setChecked(True)
+        self.cs_crc8.setToolTip("多项式 0x07，初值 0x00，无反射、无最终异或（CRC-8/ATM）")
         self.cs_crc16 = QCheckBox("CRC16-Modbus"); self.cs_crc16.setChecked(True)
+        self.cs_crc16.setToolTip("多项式 0xA001（反射），初值 0xFFFF，低字节在前")
         self.cs_xor = QCheckBox("异或")
         self.cs_sum = QCheckBox("累加和")
         row2.addWidget(self.cs_crc8); row2.addWidget(self.cs_crc16)
@@ -91,7 +93,7 @@ class ToolsDialog(QDialog):
         results = []
         if self.cs_crc8.isChecked():
             v = utils.crc8(data)
-            lines.append(f"CRC8          = 0x{v:02X}  ({v})")
+            lines.append(f"CRC8 (poly 0x07, init 0x00) = 0x{v:02X}  ({v})")
             results.append(("CRC8", v))
         if self.cs_crc16.isChecked():
             v = utils.crc16_modbus(data)

@@ -22,8 +22,7 @@ PARITY_MAP = {"None": serial.PARITY_NONE, "Even": serial.PARITY_EVEN,
               "Odd": serial.PARITY_ODD}
 
 # ---- 颜色 ----
-# 接收区为深色底（#0b1018）：正文用浅灰白保证对比度，时间戳用弱化灰
-RECV_COLOR = QColor("#dde5f0")
+# 接收区为深色底：正文用浅灰白保证对比度，时间戳用弱化灰（正文配色见 RECV_THEME_TEXT）
 TIME_COLOR = QColor("#7c8798")
 TX_COLOR = QColor("#e6a23c")
 ERROR_COLOR = QColor("#f5222d")
@@ -48,19 +47,25 @@ MIN_FONT_SIZE = 8
 MAX_FONT_SIZE = 24
 RECV_THEME_BLUE = "blue"    # 蓝底白字
 RECV_THEME_GREEN = "green"  # 黑底绿字（经典）
-RECV_FONT_FAMILY = "Consolas"   # 等宽字体，缺失时回退系统字体
+RECV_FONT_FAMILY = "Consolas"   # 等宽字体，缺失时按下列顺序回退
+RECV_FONT_FALLBACKS = ["Consolas", "Cascadia Mono", "JetBrains Mono",
+                       "DejaVu Sans Mono", "Menlo", "monospace"]
+# 注意：全局 QSS 的 QWidget{font-family} 会覆盖 setFont 的字体族，
+# 因此等宽字体族必须写在接收区自身样式表里才能生效。
+_RECV_FONT_CSS = ('font-family:"JetBrains Mono","Consolas","Cascadia Mono",'
+                  '"DejaVu Sans Mono",monospace;')
 
-# 接收区配色模板（字体与字号由 setFont 控制，QSS 只负责背景/边框/颜色）
+# 接收区配色模板（字号由 setFont 控制，字体族/背景/边框/颜色由 QSS 控制）
 RECV_THEME_STYLE = {
     RECV_THEME_BLUE: (
         "QPlainTextEdit{background-color:#0b1018;color:#dde5f0;"
         "border:1px solid #232e3f;border-radius:8px;padding:6px;"
-        "selection-background-color:#2f6bff;}"
+        "selection-background-color:#2f6bff;" + _RECV_FONT_CSS + "}"
     ),
     RECV_THEME_GREEN: (
         "QPlainTextEdit{background-color:#0a0f0a;color:#39d353;"
         "border:1px solid #1f2b1f;border-radius:6px;padding:6px;"
-        "selection-background-color:#1d3a22;}"
+        "selection-background-color:#1d3a22;" + _RECV_FONT_CSS + "}"
     ),
 }
 
@@ -81,9 +86,6 @@ WAVE_CHART_HEIGHT = 110     # 波形条固定高度
 
 # ---- 接收原始数据缓冲（用于 HEX 导出，超限丢最旧） ----
 RX_RAW_CAP = 16 * 1024 * 1024
-
-# ---- 多条发送列表 ----
-MULTISEND_KEYS = ["multisend_used", "multisend_text", "multisend_delay"]
 
 
 def resource_path(relative_path):

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from . import config
 from . import styles
 from . import utils
-from .serial_worker import SerialWorker
+from .serial_worker import SerialWorker, PortScanner
 
 
 # ====================== 自定义下拉控件（点击即展开） ======================
@@ -183,6 +183,7 @@ class LecoSerial(QMainWindow):
         self._ms_loop_idx = 0
         self._port_set = set()         # 上次扫描到的串口集合（热插拔比对）
         self._port_missing = False     # 已提示过"串口拔出"，避免每 2s 刷屏
+        self._preferred_port = ""      # 上次保存/选择的端口（列表重建时优先恢复）
         self._dot_state = None         # 上次状态点样式（仅变化时重刷）
         self._sending_file = False     # 文件发送中（防重入）
         self._file_send = None         # 正在发送的文件句柄
@@ -214,6 +215,9 @@ class LecoSerial(QMainWindow):
         self.worker.disconnected.connect(self.on_disconnected)
         self.worker.error.connect(self.on_worker_error)
         self.worker.lines_state.connect(self.on_lines_state)
+        # 串口枚举放后台线程：comports() 在 Windows 上可能耗时上百毫秒
+        self.port_scanner = PortScanner(self)
+        self.port_scanner.ports_scanned.connect(self._on_ports_scanned)
 
         # ---------- 全局样式（含卡片样式，卡片必须与全局 QSS 同一次应用才生效） ----------
         self.setStyleSheet(styles.GLOBAL_QSS + styles.CARD_QSS)
@@ -724,7 +728,7 @@ class LecoSerial(QMainWindow):
             return []
         out = []
         for p in ports:
-            d = p.description.lower()
+            d = (p.description or "").lower()
             if "bluetooth" in d or "蓝牙" in d:
                 continue
             out.append(p.device)
@@ -733,9 +737,17 @@ class LecoSerial(QMainWindow):
     def check_ports(self):
         if self._closing:
             return
-        now = set(self._scan_ports())
-        if now != self._port_set:
-            self.refresh_port_list()      # 热插拔：下拉列表自动同步（保留当前选择）
+        # 后台枚举：不阻塞 UI 线程
+        self.port_scanner.scan()
+
+    def _on_ports_scanned(self, ports):
+        """后台扫描结果：同步下拉列表并按需提示拔出。"""
+        if self._closing:
+            return
+        devices = [d for d, _ in ports]
+        if set(devices) != self._port_set:
+            self._apply_port_list(devices)      # 热插拔：列表自动同步（保留选择）
+        now = set(devices)
         if self._connected and self.current_port and self.current_port not in now:
             if not self._port_missing:
                 self._port_missing = True
@@ -744,18 +756,24 @@ class LecoSerial(QMainWindow):
         else:
             self._port_missing = False
 
-    def refresh_port_list(self):
-        ports = self._scan_ports()
-        self._port_set = set(ports)
+    def _apply_port_list(self, devices):
+        """重建端口下拉项：优先保留当前选择，其次恢复上次保存的端口。"""
+        self._port_set = set(devices)
         cur = self.cb_com.currentText()
         self.cb_com.blockSignals(True)
         self.cb_com.clear()
-        self.cb_com.addItems(ports)
-        if cur in ports:
+        self.cb_com.addItems(devices)
+        if cur in devices:
             self.cb_com.setCurrentText(cur)
-        elif len(ports) == 1:
-            self.cb_com.setCurrentText(ports[0])
+        elif self._preferred_port in devices:
+            self.cb_com.setCurrentText(self._preferred_port)
+        elif len(devices) == 1:
+            self.cb_com.setCurrentText(devices[0])
         self.cb_com.blockSignals(False)
+
+    def refresh_port_list(self):
+        """手动刷新（启动 / F5）：同步枚举一次，保证启动瞬间就有可用列表。"""
+        self._apply_port_list(self._scan_ports())
 
     # ---------- worker 信号槽 ----------
     def on_connected(self, info):
@@ -835,7 +853,8 @@ class LecoSerial(QMainWindow):
 
     def _recv_text_color(self):
         """接收区正文颜色跟随当前配色主题（深色底用浅色字，保证对比度）。"""
-        return config.RECV_THEME_TEXT.get(self._recv_theme, config.RECV_COLOR)
+        return config.RECV_THEME_TEXT.get(
+            self._recv_theme, config.RECV_THEME_TEXT[config.RECV_THEME_BLUE])
 
     def format_received(self, buf):
         if self.ck_hex.isChecked():
@@ -1256,8 +1275,13 @@ class LecoSerial(QMainWindow):
 
     # ---------- 接收区外观 ----------
     def apply_recv_theme(self):
-        self.recv_box.setStyleSheet(config.RECV_THEME_STYLE[self._recv_theme])
+        # 字体族与字号都写在接收区自身样式表：全局 QWidget 规则会覆盖 setFont，
+        # 只靠 setFont 会导致字体族/字号失效（字号仍需支持 Ctrl+滚轮调整）。
+        css = config.RECV_THEME_STYLE[self._recv_theme]
+        css += "\nQPlainTextEdit{font-size:%dpt;}" % self._font_size
+        self.recv_box.setStyleSheet(css)
         f = QFont(config.RECV_FONT_FAMILY, self._font_size)
+        f.setFamilies(config.RECV_FONT_FALLBACKS)   # 跨平台等宽字体回退链
         f.setStyleHint(QFont.StyleHint.Monospace)
         self.recv_box.setFont(f)
 
@@ -1444,6 +1468,7 @@ class LecoSerial(QMainWindow):
             self.restoreGeometry(geo)
         p = self.qs.value("port", "")
         if p:
+            self._preferred_port = p
             self.cb_com.setCurrentText(p)
         self.cb_baud.setCurrentText(self.qs.value("baud", "115200"))
         self.cb_data.setCurrentText(self.qs.value("data", "8"))
@@ -1547,6 +1572,7 @@ class LecoSerial(QMainWindow):
         self._closing = True
         self.rate_timer.stop()
         self.port_timer.stop()
+        self.port_scanner.shutdown()   # 等后台枚举收尾，避免 QThread 未结束就销毁
         self.close_serial()
         self._flush_log()
         if self.log_file:

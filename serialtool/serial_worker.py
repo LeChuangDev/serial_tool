@@ -4,6 +4,7 @@ import threading
 import time
 
 import serial
+import serial.tools.list_ports
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from . import config
@@ -201,3 +202,40 @@ class SerialWorker(QThread):
             self._stop.clear()
             if announced:
                 self.disconnected.emit("串口已断开")
+
+
+class PortScanner(QThread):
+    """串口枚举线程。
+
+    Windows 上 list_ports.comports() 可能耗时几十到几百毫秒，放在 UI 线程
+    会造成周期性微卡顿；这里改为后台扫描，结果通过信号送回界面。
+    """
+
+    ports_scanned = pyqtSignal(list)   # [(device, description)]，已按设备名排序
+
+    def scan(self):
+        """触发一次扫描；上一次未结束时跳过，避免堆积。"""
+        if self.isRunning():
+            return False
+        self.start()
+        return True
+
+    def run(self):
+        try:
+            ports = serial.tools.list_ports.comports()
+        except Exception:
+            ports = []
+        out = []
+        for p in ports:
+            d = (p.description or "").lower()
+            if "bluetooth" in d or "蓝牙" in d:
+                continue
+            out.append((p.device, p.description or ""))
+        out.sort(key=lambda x: x[0])
+        self.ports_scanned.emit(out)
+
+    def shutdown(self, timeout=1.5):
+        """关闭前等扫描线程收尾（不用 wait()，避免该环境下的原生崩溃）。"""
+        deadline = time.time() + timeout
+        while not self.isFinished() and time.time() < deadline:
+            time.sleep(0.005)

@@ -32,7 +32,7 @@ def crc16_modbus(data):
 
 
 def crc8(data, poly=0x07):
-    """CRC-8 校验值（多项式 0x07，初值 0x00，无反射）。"""
+    """CRC-8/ATM：多项式 0x07，初值 0x00，无反射、无最终异或。"""
     crc = 0
     for b in data:
         crc ^= b
