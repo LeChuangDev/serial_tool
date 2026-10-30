@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -68,6 +69,14 @@ class SettingsStore:
         if hi is not None:
             value = min(hi, value)
         return value
+
+    def get_float(self, key: str, default: float = 0.0) -> float:
+        """读取浮点（Y 轴量程等）；非数值或 NaN/inf 一律回退默认值。"""
+        try:
+            value = float(self._s.value(key, default))
+        except (TypeError, ValueError):
+            return default
+        return value if math.isfinite(value) else default
 
     def get_bool(self, key: str, default: bool = False) -> bool:
         value = self._s.value(key, default)

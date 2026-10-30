@@ -169,7 +169,7 @@ QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}
 QLabel#fieldLabel{color:#7c8798;font-size:12px;}
 QLabel#mono{color:#dde5f0;font-size:13px;font-weight:600;
     font-family:"JetBrains Mono","Consolas","Cascadia Mono",monospace;}
-QLabel#statValue{color:#dde5f0;font-size:15px;font-weight:600;
+QLabel#statValue{color:#dde5f0;font-size:13px;font-weight:600;
     font-family:"JetBrains Mono","Consolas","Cascadia Mono",monospace;}
 QLabel#reconnectChip{color:#e6a23c;font-size:12px;background-color:#241d10;
     border:1px solid #4a3a1c;border-radius:10px;padding:1px 9px;}
@@ -195,4 +195,11 @@ QFrame#card QTabBar::tab{background:transparent;border:none;
 QFrame#card QTabBar::tab:selected{color:#dde5f0;font-weight:600;
     border-bottom:2px solid #2f6bff;background:transparent;}
 QFrame#card QTabBar::tab:hover:!selected{color:#dde5f0;}
+
+/* ---- v3.1：左上角模式切换（分段控件）---- */
+QFrame#segControl{background-color:#131a26;border:1px solid #232e3f;border-radius:10px;}
+QFrame#segControl QPushButton{background:transparent;border:none;border-radius:7px;
+    color:#7c8798;padding:5px 18px;font-size:13px;}
+QFrame#segControl QPushButton:hover{color:#dde5f0;}
+QFrame#segControl QPushButton:checked{background:#2f6bff;color:#ffffff;font-weight:600;}
 """

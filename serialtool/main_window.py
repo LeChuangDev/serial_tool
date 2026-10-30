@@ -10,6 +10,7 @@
 - ``serial_worker``    串口读写、命令队列、信号线
 - ``settings_store``   配置持久化（类型收敛）
 - ``panels`` / ``widgets``  布局与自绘控件
+- ``plot_controller``  绘图模式的编排（协议解码 / 示波器 / 通道管理，以 mixin 混入本窗口）
 - 本模块               信号绑定、用户操作编排、状态迁移
 """
 
@@ -45,6 +46,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QSplitter,
+    QStackedWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -52,6 +54,7 @@ from PyQt6.QtWidgets import (
 
 from . import config, panels, styles, utils
 from .highlight import Highlighter, parse_rules, serialize_rules
+from .plot_controller import PlotController
 from .ports import PortInfo, PortScanner, enumerate_ports, pick_port
 from .reconnect import ReconnectPolicy, ReconnectScheduler
 from .recv_pipeline import SPLIT_BY_PACKET, SPLIT_MODE_MAP, RecvFormatter
@@ -68,11 +71,12 @@ _PANEL_SKIP_FIELDS = frozenset({"frame", "root", "body_layout"})
 _MAX_HIGHLIGHT_RULES = 50
 
 # 窗口缩放下限：低于此值连接栏两行会挤不下（参数下拉框被迫收窄 → 省略号截断）
+# 高度下限需同时容纳"模式切换条 + 连接栏 + 左侧三卡片"而不压缩左侧控件。
 _MIN_WIDTH = 1120
-_MIN_HEIGHT = 680
+_MIN_HEIGHT = 760
 
 
-class LecoSerial(QMainWindow):
+class LecoSerial(PlotController, QMainWindow):
     """串口调试终端主窗口。"""
 
     # 供线程内异常钩子投递回主线程（Qt 信号跨线程自动排队）
@@ -118,6 +122,14 @@ class LecoSerial(QMainWindow):
         self._recv_theme = config.RECV_THEME_BLUE
         self._ts = TimestampFormatter()
         self._highlighter = Highlighter()
+
+        # ---------- 绘图模式 ----------
+        self._mode = config.MODE_TERMINAL  # 当前工作模式（终端 / 绘图）
+        self._plot_decoder = None  # 按协议惰性创建
+        self._plot_is_firewater = False
+        self._plot_bad_lines = 0
+        self._channel_combo_count = -1  # 通道下拉已同步的通道数（变化才重建）
+        self._ch_table_count = -1  # 通道表格已同步的通道数（变化才重建）
 
         # ---------- 日志文件 ----------
         self.log_file = None
@@ -194,6 +206,7 @@ class LecoSerial(QMainWindow):
         self.refresh_port_list()
         self.load_settings()
         self._apply_recv_style()
+        self._apply_minimum_size()
 
         self.rate_timer.start(1000)
         self.port_timer.start(5000)  # 5s 扫一次：Windows 枚举有开销，够用
@@ -213,13 +226,20 @@ class LecoSerial(QMainWindow):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
 
+        # 左上角模式切换（Trae 风格分段控件）
+        self.mode_bar = panels.ModeBar.build()
+        self._bind_panel(self.mode_bar)
+        root.addWidget(self.mode_bar.frame, 0, Qt.AlignmentFlag.AlignLeft)
+
         # 顶部连接栏：参数与连接动作放在一起，符合串口工具的肌肉记忆
         self.conn_bar = panels.ConnectionBar.build()
         self._bind_panel(self.conn_bar)
         root.addWidget(self.conn_bar.frame)
 
+        # 内容区：终端 / 绘图 两页由左上角切换器切换（同一串口会话，连接不中断）
+        self.mode_stack = QStackedWidget()
         self.main_split = QSplitter(Qt.Orientation.Horizontal)
-        root.addWidget(self.main_split, 1)
+        root.addWidget(self.mode_stack, 1)
 
         # 左侧窄栏：会话 / 显示 / 统计（只读或低频操作）
         self.session_card = panels.SessionCard.build()
@@ -261,13 +281,26 @@ class LecoSerial(QMainWindow):
         self.v_split.setCollapsible(0, False)
         self.v_split.setCollapsible(1, False)
 
-        # 最小尺寸按"所有字段都能完整显示"反推：先让布局算一遍，再取 Qt 给出的
-        # 最小需求与人工下限的较大者。不写死原因：字体（字号/字宽）会影响
-        # sizeHint，硬编码会在换环境后重新出现省略号截断。
+        # 绘图模式页：协议示波器（同一串口会话，切换时不重连）
+        self.plot_panel = panels.PlotPanel.build()
+        self._bind_panel(self.plot_panel)
+        self.mode_stack.addWidget(self.main_split)  # 第 0 页：终端
+        self.mode_stack.addWidget(self.plot_panel.frame)  # 第 1 页：绘图
+
+        # 最小尺寸的设定移到 __init__ 末尾（load_settings 之后）：控件状态（时间戳
+        # 格式、断行模式等）会影响 sizeHint，过早计算会低估，导致左侧卡片被压缩。
         root.activate()
+
+    def _apply_minimum_size(self) -> None:
+        """按"所有字段都能完整显示"设定最小尺寸。
+
+        取 Qt 动态算出的 ``minimumSizeHint`` 与人工下限的较大者。不写死原因：字体
+        （字号/字宽）会影响 sizeHint，硬编码会在换环境后重新出现省略号截断或卡片压缩。
+        """
+        hint = self.minimumSizeHint()
         self.setMinimumSize(
-            max(_MIN_WIDTH, self.minimumSizeHint().width()),
-            max(_MIN_HEIGHT, self.minimumSizeHint().height()),
+            max(_MIN_WIDTH, hint.width()),
+            max(_MIN_HEIGHT, hint.height()),
         )
 
     def _bind_panel(self, panel: object) -> None:
@@ -305,6 +338,14 @@ class LecoSerial(QMainWindow):
         self.act_autoreconnect.triggered.connect(self.btn_autoreconnect.setChecked)
         serial_menu.addAction(self.act_autoreconnect)
         serial_menu.addAction(self._action("立即重连一次", self.manual_reconnect))
+
+        view_menu = menu_bar.addMenu("视图")
+        view_menu.addAction(
+            self._action("终端模式", lambda: self.switch_mode(config.MODE_TERMINAL), "Ctrl+Shift+1")
+        )
+        view_menu.addAction(
+            self._action("绘图模式", lambda: self.switch_mode(config.MODE_PLOT), "Ctrl+Shift+2")
+        )
 
         tools_menu = menu_bar.addMenu("工具")
         tools_menu.addAction(self._action("校验和计算", lambda: self.open_tools(0)))
@@ -425,6 +466,7 @@ class LecoSerial(QMainWindow):
         self.ck_hex.toggled.connect(lambda _: self._formatter.reset())
         self.fatal_error.connect(self._on_fatal_error)
         self.send_box.installEventFilter(self)
+        self.bind_plot_signals()
 
     def open_tools(self, tab: int = 0) -> None:
         """打开校验和 / 转换工具对话框（tab: 0 校验和, 1 HEX/ASCII 转换）。"""
@@ -915,6 +957,14 @@ class LecoSerial(QMainWindow):
             keep = config.RX_RAW_CAP // 8 * 7
             del self._rx_raw[: len(self._rx_raw) - keep]
 
+        if self._mode == config.MODE_PLOT:
+            # 绘图模式：跳过文本/HEX/高亮渲染，直接把字节喂给协议解码器，
+            # 省下文本管线的 CPU，专供示波器刷新。
+            if not self.btn_plot_pause.isChecked():
+                for chunk, timestamp in packets:
+                    self._plot_feed(chunk, timestamp)
+            return
+
         if self.btn_pause.isChecked():
             # 暂停冻结渲染；跳过量如实统计并展示，避免用户误判为丢数据故障
             self._paused_dropped += total
@@ -955,6 +1005,10 @@ class LecoSerial(QMainWindow):
         self._ts.set_mode(mode)
         if not self.ck_time.isChecked():
             self.ck_time.setChecked(True)  # 选了格式却没开时间戳是常见困惑点
+
+    # =========================================================
+    #  模式切换（终端 / 绘图）与协议解码
+    # =========================================================
 
     def _recv_text_color(self) -> QColor:
         """接收区正文颜色跟随当前配色主题（深色底用浅色字，保证对比度）。"""
@@ -1459,6 +1513,7 @@ class LecoSerial(QMainWindow):
         self.update_conn_label()
         self.update_recv_stat()
         self.update_stats()
+        self._update_plot_stat()
         self._check_log_rollover()
         self._flush_log()
         if self._connected:
@@ -1891,6 +1946,15 @@ class LecoSerial(QMainWindow):
             self.v_split.restoreState(state)
         self._update_port_info()
 
+        # 工作模式与绘图协议（v3.1 起）
+        mode = self.store.get_str("mode", config.MODE_TERMINAL)
+        self._set_mode(mode if mode in config.MODES else config.MODE_TERMINAL)
+        protocol_label = self.store.get_str("plot_protocol")
+        if protocol_label in config.PLOT_PROTOCOLS:
+            self.cb_protocol.setCurrentText(protocol_label)
+        self._reset_plot_decoder()
+        self._restore_plot_view()
+
     def _restore_multisend(self) -> None:
         used = self.store.get_bool_list("multisend_used")
         texts = self.store.get_str_list("multisend_text")
@@ -1933,6 +1997,17 @@ class LecoSerial(QMainWindow):
         self.store.set("highlight_rules", serialize_rules(self._highlighter.rules))
         self.store.set("font_size", self._font_size)
         self.store.set("recv_theme", self._recv_theme)
+        self.store.set("mode", self._mode)
+        self.store.set("plot_protocol", self.cb_protocol.currentText())
+        self.store.set("plot_window", self.cb_window.currentText())
+        self.store.set("plot_fft", self.cb_fft_points.currentText())
+        self.store.set("plot_view", self.scope.view())
+        y_lo, y_hi, y_auto = self.scope.y_range()
+        self.store.set("plot_y_auto", y_auto)
+        self.store.set("plot_y_lo", y_lo)
+        self.store.set("plot_y_hi", y_hi)
+        # 通道元数据（名称 / 颜色 / 标定）随配置落盘，重启不丢
+        self.store.set("plot_channels", json.dumps(self.scope.export_meta()))
 
         used, texts, delays = [], [], []
         for row in range(self.ms_table.rowCount()):

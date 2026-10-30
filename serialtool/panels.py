@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QFrame,
     QGridLayout,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QSplitter,
     QTableWidget,
     QTabWidget,
     QVBoxLayout,
@@ -35,15 +37,18 @@ from PyQt6.QtWidgets import (
 
 from . import config
 from .recv_pipeline import SPLIT_MODE_MAP
+from .scope import ScopeWidget
 from .widgets import ClickComboBox, MiniRateChart, RecvPlainTextEdit, WaveChart
 
 __all__ = [
+    "ModeBar",
     "ConnectionBar",
     "SessionCard",
     "DisplayCard",
     "StatsCard",
     "RecvPanel",
     "SendPanel",
+    "PlotPanel",
     "make_card",
     "field_label",
 ]
@@ -54,8 +59,8 @@ def make_card(title: str) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setObjectName("card")
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(12, 10, 12, 12)
-    layout.setSpacing(9)
+    layout.setContentsMargins(12, 8, 12, 10)
+    layout.setSpacing(6)
     label = QLabel(title)
     label.setObjectName("cardTitle")
     layout.addWidget(label)
@@ -82,6 +87,22 @@ def _combo(items: list[str], current: str | None = None, width: int | None = Non
         box.setCurrentText(current)
     # sizeHint 已含箭头与内边距，按最长条目自适应
     box.setMinimumWidth(max(width or 0, box.sizeHint().width()))
+    return box
+
+
+def _checkbox(text: str, tooltip: str = "", *, checked: bool = False) -> QCheckBox:
+    """创建复选框并锁住最小行高。
+
+    Qt 的 ``QCheckBox`` 其 ``minimumSizeHint`` **不包含文字**，导致布局高度不足时
+    复选框被垂直压扁、文字互相叠印（真实中文字体下尤其明显）。这里显式设置
+    ``minimumHeight``，保证任何情况下至少一行文字可读。
+    """
+    box = QCheckBox(text)
+    box.setMinimumHeight(20)
+    if tooltip:
+        box.setToolTip(tooltip)
+    if checked:
+        box.setChecked(True)
     return box
 
 
@@ -197,6 +218,43 @@ class ConnectionBar:
         )
 
 
+@dataclass(slots=True)
+class ModeBar:
+    """左上角模式切换器（Trae 风格分段控件）：终端 ↔ 绘图。"""
+
+    frame: QFrame
+    group: QButtonGroup
+    btn_terminal: QPushButton
+    btn_plot: QPushButton
+
+    @classmethod
+    def build(cls) -> ModeBar:
+        frame = QFrame()
+        frame.setObjectName("segControl")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(2)
+
+        btn_terminal = QPushButton("终端")
+        btn_terminal.setObjectName("segBtn")
+        btn_terminal.setCheckable(True)
+        btn_terminal.setChecked(True)
+        btn_terminal.setToolTip("文本收发：HEX / 时间戳 / 高亮 / 文件发送")
+        btn_plot = QPushButton("绘图")
+        btn_plot.setObjectName("segBtn")
+        btn_plot.setCheckable(True)
+        btn_plot.setToolTip("VOFA+ 风格协议示波器：JustFloat / FireWater")
+
+        group = QButtonGroup(frame)
+        group.setExclusive(True)
+        group.addButton(btn_terminal, 0)
+        group.addButton(btn_plot, 1)
+
+        layout.addWidget(btn_terminal)
+        layout.addWidget(btn_plot)
+        return cls(frame, group, btn_terminal, btn_plot)
+
+
 def _signal_button(text: str, tooltip: str) -> QPushButton:
     button = QPushButton(text)
     button.setObjectName("toggle")
@@ -221,7 +279,8 @@ class SessionCard:
     def build(cls) -> SessionCard:
         frame, layout = make_card("会话")
         grid = QGridLayout()
-        grid.setSpacing(6)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(4)
         grid.setColumnStretch(1, 1)
 
         lab_port = QLabel("未选择")
@@ -271,21 +330,15 @@ class DisplayCard:
     def build(cls) -> DisplayCard:
         frame, layout = make_card("显示")
 
-        ck_hex = QCheckBox("HEX 显示")
-        ck_hex.setToolTip("按字节显示（空格分隔大写 HEX）")
-        ck_time = QCheckBox("时间戳")
-        ck_time.setToolTip("每行前加时间戳")
-        ck_wrap = QCheckBox("自动换行")
-        ck_wrap.setChecked(True)
-        ck_wrap.setToolTip("关闭后超长行横向滚动，便于对齐列数据")
-        ck_clear = QCheckBox("自动清除")
-        ck_clear.setToolTip("每收到一批数据前清屏，只看最新输出")
-        ck_log = QCheckBox("记录到文件")
-        ck_autolog = QCheckBox("连接后自动记录")
-        ck_autolog.setToolTip("连接成功即开始写 logs/serial_YYYYMMDD.log，掉线重连后继续")
-        ck_highlight = QCheckBox("关键字高亮")
-        ck_highlight.setChecked(True)
-        ck_highlight.setToolTip("按规则给 error/ready 等关键字着色")
+        ck_hex = _checkbox("HEX 显示", "按字节显示（空格分隔大写 HEX）")
+        ck_time = _checkbox("时间戳", "每行前加时间戳")
+        ck_wrap = _checkbox("自动换行", "关闭后超长行横向滚动，便于对齐列数据", checked=True)
+        ck_clear = _checkbox("自动清除", "每收到一批数据前清屏，只看最新输出")
+        ck_log = _checkbox("记录到文件", "手动开启/关闭记录（连接后可勾选立即开始）")
+        ck_autolog = _checkbox(
+            "连接后自动记录", "连接成功即开始写 logs/serial_YYYYMMDD.log，掉线重连后继续"
+        )
+        ck_highlight = _checkbox("关键字高亮", "按规则给 error/ready 等关键字着色", checked=True)
 
         two = QGridLayout()
         two.setSpacing(6)
@@ -355,11 +408,12 @@ class StatsCard:
         frame, layout = make_card("统计")
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(4)
+        grid.setVerticalSpacing(3)
 
         def tile(caption: str, value: str = "0") -> tuple[QLabel, QLabel]:
             value_label = QLabel(value)
             value_label.setObjectName("statValue")
+            value_label.setMinimumHeight(16)  # 防布局压缩导致数值被垂直裁切
             return field_label(caption), value_label
 
         lab_rx_cap, lab_rx = tile("接收")
@@ -773,4 +827,197 @@ class SendPanel:
             edit_pace,
             file_progress,
             btn_sendfile,
+        )
+
+
+@dataclass(slots=True)
+class PlotPanel:
+    """绘图模式面板：协议 + 视图切换（波形/频谱/直方图）+ 分析工具 + 示波器 + 通道管理。
+
+    主体为水平 splitter：左侧示波器占主视野，右侧通道表格提供每条通道的
+    名称 / 颜色 / 比例 / 偏置 / 小数位数编辑（对标 VOFA+ 的"数据"对象）。
+    """
+
+    frame: QFrame
+    cb_protocol: ClickComboBox
+    lab_plot_stat: QLabel
+    btn_plot_clear: QPushButton
+    btn_plot_pause: QPushButton
+    btn_view_wave: QPushButton
+    btn_view_spectrum: QPushButton
+    btn_view_histogram: QPushButton
+    cb_channel: ClickComboBox
+    cb_window: ClickComboBox
+    cb_fft_points: ClickComboBox
+    btn_export: QPushButton
+    lab_ch_stats: QLabel
+    btn_yrange: QPushButton
+    scope: ScopeWidget
+    ch_table: QTableWidget
+    plot_split: QSplitter
+
+    @classmethod
+    def build(cls) -> PlotPanel:
+        frame = QFrame()
+        frame.setObjectName("card")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ---- 第一行：标题 + 协议 + 帧率统计 + 暂停/清空 ----
+        lab_title = QLabel("绘图")
+        lab_title.setObjectName("sectionTitle")
+        cb_protocol = _combo(list(config.PLOT_PROTOCOLS.keys()))
+        cb_protocol.setToolTip(
+            "JustFloat：小端 float 数组 + 0x7F800000 帧尾（快，适合高频多通道）；"
+            "FireWater：CSV 文本，逗号分隔 + 换行结尾（直观，适合低频少通道）"
+        )
+        lab_plot_stat = QLabel("0 帧 · 0 通道")
+        lab_plot_stat.setObjectName("hint")
+        btn_plot_pause = _tool_button("暂停", "冻结示波器（数据仍计数）", checkable=True)
+        btn_plot_clear = _tool_button("清空", "清空所有曲线")
+
+        head = QHBoxLayout()
+        head.setContentsMargins(12, 8, 12, 6)
+        head.setSpacing(8)
+        head.addWidget(lab_title)
+        head.addSpacing(4)
+        head.addWidget(field_label("协议"))
+        head.addWidget(cb_protocol)
+        head.addStretch()
+        head.addWidget(lab_plot_stat)
+        head.addWidget(btn_plot_pause)
+        head.addWidget(btn_plot_clear)
+        layout.addLayout(head)
+
+        # ---- 第二行：视图切换 + 通道 + 时间窗 + FFT + 导出 ----
+        btn_view_wave = QPushButton("波形")
+        btn_view_spectrum = QPushButton("频谱")
+        btn_view_histogram = QPushButton("直方图")
+        view_group = QButtonGroup(frame)
+        view_group.setExclusive(True)
+        for idx, button in enumerate((btn_view_wave, btn_view_spectrum, btn_view_histogram)):
+            button.setObjectName("segBtn")
+            button.setCheckable(True)
+            view_group.addButton(button, idx)
+        btn_view_wave.setChecked(True)
+        btn_view_wave.setToolTip("滚动波形（默认）")
+        btn_view_spectrum.setToolTip("对选中通道做 FFT 频谱")
+        btn_view_histogram.setToolTip("对选中通道做直方图分布统计")
+
+        view_seg = QFrame()
+        view_seg.setObjectName("segControl")
+        view_layout = QHBoxLayout(view_seg)
+        view_layout.setContentsMargins(3, 3, 3, 3)
+        view_layout.setSpacing(2)
+        for button in (btn_view_wave, btn_view_spectrum, btn_view_histogram):
+            view_layout.addWidget(button)
+
+        cb_channel = _combo(["CH1"], width=76)
+        cb_channel.setToolTip("频谱 / 直方图 / 统计所分析的通道")
+        cb_window = _combo([f"{s:g}s" for s in config.SCOPE_WINDOW_OPTIONS], "10s", width=72)
+        cb_window.setToolTip("X 轴时间窗口（秒）")
+        cb_fft_points = _combo([str(n) for n in config.SCOPE_FFT_OPTIONS], "1024", width=76)
+        cb_fft_points.setToolTip("FFT 点数：越大频率分辨率越高，计算越慢")
+        btn_export = QPushButton("导出CSV")
+        btn_export.setObjectName("tool")
+        btn_export.setToolTip("把当前示波器数据导出为 CSV（时间戳 + 各通道）")
+        btn_yrange = _tool_button("Y轴", "设置 Y 轴量程：自动跟随数据，或手动固定上下限")
+        lab_ch_stats = QLabel("")
+        lab_ch_stats.setObjectName("hint")
+        lab_ch_stats.setMinimumWidth(120)
+
+        tools = QHBoxLayout()
+        tools.setContentsMargins(12, 0, 12, 6)
+        tools.setSpacing(8)
+        tools.addWidget(view_seg)
+        tools.addSpacing(6)
+        tools.addWidget(field_label("通道"))
+        tools.addWidget(cb_channel)
+        tools.addWidget(field_label("时间窗"))
+        tools.addWidget(cb_window)
+        tools.addWidget(field_label("FFT"))
+        tools.addWidget(cb_fft_points)
+        tools.addStretch()
+        tools.addWidget(lab_ch_stats)
+        tools.addWidget(btn_yrange)
+        tools.addWidget(btn_export)
+        layout.addLayout(tools)
+
+        separator = QFrame()
+        separator.setObjectName("hsep")
+        layout.addWidget(separator)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(10, 8, 10, 10)
+        body_layout.setSpacing(6)
+        scope = ScopeWidget()
+
+        # 右侧通道管理卡片：每条通道的颜色 / 名称 / 比例 / 偏置 / 小数位
+        ch_card = QFrame()
+        ch_card.setObjectName("card")
+        ch_layout = QVBoxLayout(ch_card)
+        ch_layout.setContentsMargins(10, 8, 10, 10)
+        ch_layout.setSpacing(6)
+        ch_title = QLabel("通道管理")
+        ch_title.setObjectName("cardTitle")
+        ch_layout.addWidget(ch_title)
+
+        ch_table = QTableWidget(0, 5)
+        ch_table.setObjectName("chTable")
+        ch_table.setHorizontalHeaderLabels(["颜色", "名称", "比例", "偏置", "小数位"])
+        ch_table.verticalHeader().setVisible(False)
+        ch_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        ch_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+        )
+        header = ch_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for col in (2, 3, 4):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+        ch_table.setColumnWidth(0, 36)
+        ch_table.setColumnWidth(2, 50)
+        ch_table.setColumnWidth(3, 50)
+        ch_table.setColumnWidth(4, 50)
+        ch_table.setMinimumWidth(280)
+        ch_layout.addWidget(ch_table, 1)
+
+        ch_hint = QLabel("点击「颜色」改线条颜色 · 双击「名称」重命名 · 比例/偏置对显示值做标定")
+        ch_hint.setObjectName("hint")
+        ch_hint.setWordWrap(True)
+        ch_layout.addWidget(ch_hint)
+
+        plot_split = QSplitter(Qt.Orientation.Horizontal)
+        plot_split.setObjectName("plotSplit")
+        plot_split.addWidget(scope)
+        plot_split.addWidget(ch_card)
+        plot_split.setStretchFactor(0, 1)
+        plot_split.setStretchFactor(1, 0)
+        plot_split.setSizes([740, 320])
+        plot_split.setCollapsible(0, False)
+
+        body_layout.addWidget(plot_split, 1)
+        layout.addWidget(body, 1)
+
+        return cls(
+            frame,
+            cb_protocol,
+            lab_plot_stat,
+            btn_plot_clear,
+            btn_plot_pause,
+            btn_view_wave,
+            btn_view_spectrum,
+            btn_view_histogram,
+            cb_channel,
+            cb_window,
+            cb_fft_points,
+            btn_export,
+            lab_ch_stats,
+            btn_yrange,
+            scope,
+            ch_table,
+            plot_split,
         )

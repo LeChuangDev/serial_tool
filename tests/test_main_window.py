@@ -432,6 +432,12 @@ class TestLayoutAudit:
         assert main_window.width() >= 1100  # 最小宽度要能容纳连接栏参数
         assert self._clipped(main_window) == []
 
+    def test_no_clipping_in_plot_mode(self, main_window, qapp):
+        main_window.switch_mode("plot")
+        main_window.resize(main_window.minimumSize())
+        qapp.processEvents()
+        assert self._clipped(main_window) == []
+
     def test_long_combo_items_are_readable(self, main_window):
         """选中长选项后仍能完整显示：宽度下限取自内容，而不是写死的固定像素。"""
         from PyQt6.QtWidgets import QComboBox
@@ -444,3 +450,234 @@ class TestLayoutAudit:
             assert combo.width() + 2 >= combo.sizeHint().width(), (
                 f"选项被截断: {combo.currentText()}"
             )
+
+
+class TestModeSwitch:
+    """左上角模式切换：终端 ↔ 绘图，同一串口会话不重连。"""
+
+    @staticmethod
+    def _justfloat(*values: float) -> bytes:
+        import struct
+
+        return b"".join(struct.pack("<f", v) for v in values) + struct.pack("<f", float("inf"))
+
+    def test_switch_to_plot_sets_stack(self, main_window):
+        main_window.switch_mode("plot")
+        assert main_window._mode == "plot"
+        assert main_window.mode_stack.currentIndex() == 1
+        assert main_window.btn_plot.isChecked()
+
+    def test_plot_mode_feeds_scope(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0, 3.0))
+        assert main_window.scope.frame_count() == 1
+        assert main_window.scope.channel_count() == 3
+
+    def test_terminal_mode_does_not_feed_scope(self, main_window):
+        # 默认即终端模式，喂 JustFloat 字节不应进入示波器
+        _feed(main_window, self._justfloat(1.0, 2.0, 3.0))
+        assert main_window.scope.frame_count() == 0
+
+    def test_firewater_feeds_scope(self, main_window):
+        main_window.switch_mode("plot")
+        main_window.cb_protocol.setCurrentText("FireWater（CSV 文本）")
+        _feed(main_window, b"1.0,2.0,3.0,4.0\n")
+        assert main_window.scope.frame_count() == 1
+        assert main_window.scope.channel_count() == 4
+
+    def test_protocol_switch_resets_scope(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0))
+        assert main_window.scope.frame_count() == 1
+        main_window.cb_protocol.setCurrentText("FireWater（CSV 文本）")
+        assert main_window.scope.frame_count() == 0  # 切协议清空曲线
+
+    def test_mode_persisted(self, main_window):
+        main_window.switch_mode("plot")
+        main_window.save_settings()
+        main_window.switch_mode("terminal")
+        main_window.load_settings()
+        assert main_window._mode == "plot"
+        assert main_window.mode_stack.currentIndex() == 1
+
+    def test_switch_back_to_terminal_keeps_both(self, main_window):
+        # 绘图模式喂协议数据 → 切回终端喂文本，两者互不干扰
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0))
+        assert main_window.scope.frame_count() == 1
+
+        main_window.switch_mode("terminal")
+        _feed(main_window, b"hello terminal\n")
+        assert "hello terminal" in main_window.recv_box.toPlainText()
+        assert main_window.scope.frame_count() == 1  # 曲线保留
+
+
+class TestPlotAnalysis:
+    """绘图模式分析功能：通道下拉 / 视图切换 / 统计 / CSV 导出。"""
+
+    @staticmethod
+    def _justfloat(*values: float) -> bytes:
+        import struct
+
+        return b"".join(struct.pack("<f", v) for v in values) + struct.pack("<f", float("inf"))
+
+    def test_channel_combo_syncs(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0, 3.0))
+        assert main_window.cb_channel.count() == 3
+        assert main_window.cb_channel.itemText(2) == "CH3"
+
+    def test_view_switch(self, main_window):
+        main_window.switch_mode("plot")
+        main_window._on_view_changed("spectrum")
+        assert main_window.scope.view() == "spectrum"
+        main_window._on_view_changed("histogram")
+        assert main_window.scope.view() == "histogram"
+
+    def test_channel_stats_label(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0))
+        main_window.update_rate()
+        assert "min" in main_window.lab_ch_stats.text()
+        assert "CH1" in main_window.lab_ch_stats.text()
+
+    def test_export_csv(self, main_window, tmp_path):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0))
+        out = tmp_path / "plot.csv"
+        main_window._write_plot_csv(str(out))
+        text = out.read_text(encoding="utf-8")
+        assert "time,CH1,CH2" in text
+        assert len(text.splitlines()) == 2  # 表头 + 1 行数据
+
+
+class TestPlotControls:
+    """绘图工具栏：暂停 / Y 轴量程 —— 建了按钮就得真接线。"""
+
+    @staticmethod
+    def _justfloat(*values: float) -> bytes:
+        import struct
+
+        return b"".join(struct.pack("<f", v) for v in values) + struct.pack("<f", float("inf"))
+
+    def test_pause_button_freezes_scope(self, main_window):
+        main_window.switch_mode("plot")
+        main_window.btn_plot_pause.setChecked(True)
+        assert main_window.scope.paused() is True
+        assert main_window.btn_plot_pause.text() == "继续"
+        _feed(main_window, self._justfloat(1.0))
+        assert main_window.scope.frame_count() == 0  # 暂停期间丢弃
+
+        main_window.btn_plot_pause.setChecked(False)
+        assert main_window.scope.paused() is False
+        assert main_window.btn_plot_pause.text() == "暂停"
+        _feed(main_window, self._justfloat(1.0))
+        assert main_window.scope.frame_count() == 1
+
+    def test_y_range_applies_fixed_range(self, main_window, monkeypatch):
+        """用假对话框替掉模态弹窗：只验证取值被正确下发到示波器。"""
+        import serialtool.plot_controller as pc
+
+        class FakeDialog:
+            DialogCode = type("Code", (), {"Accepted": 1})
+
+            def __init__(self, lo, hi, auto, parent=None):
+                pass
+
+            def exec(self):
+                return 1
+
+            def values(self):
+                return False, -2.0, 2.0
+
+        monkeypatch.setattr(pc, "YRangeDialog", FakeDialog)
+        main_window.switch_mode("plot")
+        main_window._on_y_range()
+        assert main_window.scope.y_range() == (-2.0, 2.0, False)
+
+    def test_y_range_persisted(self, main_window):
+        main_window.switch_mode("plot")
+        main_window.scope.set_y_range(0.0, 8.0)
+        main_window.save_settings()
+        main_window.scope.set_auto_range(True)
+        main_window._restore_plot_view()
+        assert main_window.scope.y_range() == (0.0, 8.0, False)
+
+    def test_channel_meta_persisted(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0))
+        main_window.scope.set_channel_name(0, "温度")
+        main_window.scope.set_channel_color(0, "#ff0000")
+        main_window.scope.set_channel_scale(0, 3.0)
+        main_window.save_settings()
+
+        main_window.scope.set_channel_name(0, "被改坏")  # 弄脏后恢复
+        main_window._restore_plot_view()
+        assert main_window.scope.channel_name(0) == "温度"
+        assert main_window.scope.channel_color(0) == "#ff0000"
+        assert main_window.scope.channel_meta(0).scale == 3.0
+
+    def test_export_csv_uses_calibrated_values(self, main_window, tmp_path):
+        """比例/偏置标定后，CSV 里必须是标定值 —— 不能和曲线对不上。"""
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0))
+        main_window.scope.set_channel_scale(0, 10.0)
+        out = tmp_path / "cal.csv"
+        main_window._write_plot_csv(str(out))
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert lines[0] == "time,CH1"
+        assert lines[1].endswith(",10")  # 1.0 × 10
+
+
+class TestChannelTable:
+    """通道管理表格：同步 / 重命名 / 颜色 / 比例 / 偏置 / 小数位。"""
+
+    @staticmethod
+    def _justfloat(*values: float) -> bytes:
+        import struct
+
+        return b"".join(struct.pack("<f", v) for v in values) + struct.pack("<f", float("inf"))
+
+    def test_table_syncs_rows(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0, 3.0))
+        assert main_window.ch_table.rowCount() == 3
+        assert main_window.ch_table.item(0, 1).text() == "CH1"
+        assert main_window.ch_table.item(2, 1).text() == "CH3"
+
+    def test_rename_via_table(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0, 2.0))
+        main_window.ch_table.item(0, 1).setText("温度")
+        main_window._on_ch_table_changed(0, 1)
+        assert main_window.scope.channel_name(0) == "温度"
+        # 分析通道下拉同步刷新为自定义名称
+        assert main_window.cb_channel.itemText(0) == "温度"
+
+    def test_scale_offset_edit(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0))
+        main_window.ch_table.item(0, 2).setText("10")
+        main_window._on_ch_table_changed(0, 2)
+        assert main_window.scope.channel_meta(0).scale == 10.0
+        main_window.ch_table.item(0, 3).setText("5")
+        main_window._on_ch_table_changed(0, 3)
+        assert main_window.scope.channel_meta(0).offset == 5.0
+
+    def test_decimals_edit(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0))
+        main_window.ch_table.item(0, 4).setText("2")
+        main_window._on_ch_table_changed(0, 4)
+        assert main_window.scope.channel_meta(0).decimals == 2
+
+    def test_color_reflected_in_table(self, main_window):
+        main_window.switch_mode("plot")
+        _feed(main_window, self._justfloat(1.0))
+        main_window.scope.set_channel_color(0, "#ff0000")
+        # 重建表格后颜色单元格以图标色块展示（QSS 会覆盖 item 背景，故用图标）
+        main_window._ch_table_count = -1
+        main_window._sync_channel_table()
+        item = main_window.ch_table.item(0, 0)
+        assert not item.icon().isNull()
+        assert main_window.scope.channel_color(0) == "#ff0000"

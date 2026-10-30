@@ -12,9 +12,9 @@ from PyQt6.QtGui import QColor
 
 # ---- 应用信息 ----
 APP_NAME = "Leeco‑Serial 樂創串口调试终端"
-APP_VERSION = "3.0"  # 顶部徽标与"关于"统一引用
+APP_VERSION = "3.4"  # 顶部徽标与"关于"统一引用
 WINDOW_WIDTH = 1180
-WINDOW_HEIGHT = 780
+WINDOW_HEIGHT = 800
 APP_ICON_NAME = os.path.join("assets", "app.ico")  # 多尺寸 ICO：窗口/任务栏与打包 exe 通用
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -169,6 +169,57 @@ WAVE_CHART_HEIGHT = 96  # 波形条固定高度
 
 # ---- 接收原始数据缓冲（用于 HEX 导出，超限丢最旧） ----
 RX_RAW_CAP = 16 * 1024 * 1024
+
+# ---- 工作模式（左上角切换） ----
+MODE_TERMINAL = "terminal"  # 终端：文本收发
+MODE_PLOT = "plot"  # 绘图：VOFA+ 风格协议示波器
+MODES = [MODE_TERMINAL, MODE_PLOT]
+MODE_LABELS = {MODE_TERMINAL: "终端", MODE_PLOT: "绘图"}
+
+# ---- 绘图协议（兼容 VOFA+） ----
+PROTOCOL_JUSTFLOAT = "justfloat"  # 小端 float 数组 + 0x7F800000 帧尾
+PROTOCOL_FIREWATER = "firewater"  # CSV 文本流，逗号分隔 + 换行结尾
+PLOT_PROTOCOLS = {
+    "JustFloat（二进制浮点）": PROTOCOL_JUSTFLOAT,
+    "FireWater（CSV 文本）": PROTOCOL_FIREWATER,
+}
+PLOT_PROTOCOL_LABELS = {mode: label for label, mode in PLOT_PROTOCOLS.items()}
+
+# ---- 示波器 ----
+SCOPE_HISTORY = 200_000  # 每通道最大采样点数（环形缓冲，超限丢最旧）
+SCOPE_FPS = 30  # 重绘节流帧率（数据再快也只按此频率刷新，避免高频数据打满 CPU）
+SCOPE_MIN_FPS = 10  # 自适应降帧下限：曲线很重时也不低于此帧率，保证还能看出走势
+# 抽稀时每列的采样点数预算：超过就等距抽样，防止 16 通道长窗口把单帧绘制拖到上百毫秒
+SCOPE_DECIMATE_POINTS_PER_COL = 3
+# 单帧绘制的线段总数预算（通道数 × 像素列）：超了就把若干像素列合成一条粗线，
+# 保证 16 通道宽窗口下仍能维持可用帧率（曲线是连续包络，视觉上几乎无损）
+SCOPE_MAX_LINE_SEGMENTS = 12_000
+SCOPE_MAX_CHANNELS = 16  # 自动检测通道数上限（防异常帧撑爆内存）
+SCOPE_WINDOW_SECONDS = 10.0  # X 轴默认时间窗口（秒）
+SCOPE_FFT_POINTS = 1024  # FFT 默认点数（取最近 N 个采样做频谱，2 的幂）
+SCOPE_WINDOW_OPTIONS = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]  # 时间窗可选档位
+SCOPE_FFT_OPTIONS = [256, 512, 1024, 2048, 4096]  # FFT 点数可选档位
+SCOPE_COLORS = [
+    "#4a8cff",
+    "#3fb950",
+    "#e6a23c",
+    "#ef4a4e",
+    "#b26bff",
+    "#35d0d0",
+    "#f06292",
+    "#a8d878",
+    "#ff9f43",
+    "#7f8cff",
+    "#00c2a8",
+    "#ff6b9d",
+    "#5ad1ff",
+    "#c9d35f",
+    "#ff8a80",
+    "#8c9eff",
+]
+SCOPE_BG = "#0b1018"
+SCOPE_GRID = "#1c2432"
+SCOPE_AXIS = "#7c8798"
 
 
 def resource_path(relative_path):
