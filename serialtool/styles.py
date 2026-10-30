@@ -164,4 +164,35 @@ QScrollBar:horizontal{background:transparent;height:9px;margin:0;}
 QScrollBar::handle:horizontal{background:#232e3f;border-radius:4px;min-width:30px;}
 QScrollBar::handle:horizontal:hover{background:#4a8cff;}
 QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}
+
+/* ---- v3：表单/统计/连接栏 ---- */
+QLabel#fieldLabel{color:#7c8798;font-size:12px;}
+QLabel#mono{color:#dde5f0;font-size:13px;font-weight:600;
+    font-family:"JetBrains Mono","Consolas","Cascadia Mono",monospace;}
+QLabel#statValue{color:#dde5f0;font-size:15px;font-weight:600;
+    font-family:"JetBrains Mono","Consolas","Cascadia Mono",monospace;}
+QLabel#reconnectChip{color:#e6a23c;font-size:12px;background-color:#241d10;
+    border:1px solid #4a3a1c;border-radius:10px;padding:1px 9px;}
+
+/* 可切换按钮（自动重连 / DTR / RTS）：未选中低调，选中用强调色 */
+QPushButton#toggle{background-color:transparent;border:1px solid #2a3547;
+    border-radius:8px;padding:5px 12px;font-size:12px;color:#a8b3c4;}
+QPushButton#toggle:hover{border-color:#4a8cff;color:#dde5f0;}
+QPushButton#toggle:checked{background-color:#1b3a2a;border-color:#2f7a4a;
+    color:#56d96a;font-weight:600;}
+QPushButton#toggle:disabled{color:#5a6270;border-color:#1c2432;}
+
+QProgressBar{background-color:#10151f;border:1px solid #232e3f;border-radius:7px;
+    height:16px;text-align:center;color:#dde5f0;font-size:11px;}
+QProgressBar::chunk{background-color:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+    stop:0 #2f6bff,stop:1 #4a8cff);border-radius:6px;}
+
+/* 卡片内的页签：外层卡片已有边框，页签不再重复描边 */
+QFrame#card QTabWidget::pane{border:none;background:transparent;}
+QFrame#card QTabBar::tab{background:transparent;border:none;
+    border-bottom:2px solid transparent;color:#7c8798;
+    padding:6px 14px;margin-right:4px;border-radius:0;}
+QFrame#card QTabBar::tab:selected{color:#dde5f0;font-weight:600;
+    border-bottom:2px solid #2f6bff;background:transparent;}
+QFrame#card QTabBar::tab:hover:!selected{color:#dde5f0;}
 """

@@ -8,6 +8,13 @@ venv/
 .venv/
 env/
 
+# 测试 / 静态检查缓存
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
 # PyInstaller 打包产物
 build/
 dist/

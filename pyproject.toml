@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leeco-serial"
+version = "2.3.0"
+description = "Leeco-Serial 樂創串口调试终端（PyQt6 串口调试助手）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "PyQt6>=6.5",
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.6",
+]
+
+[project.gui-scripts]
+leeco-serial = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["serialtool*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:serialtool.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["serial-tool-redesign", "build", "dist", "drivers"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle 错误
+    "F",     # pyflakes
+    "I",     # import 排序
+    "UP",    # pyupgrade
+    "B",     # bugbear（常见陷阱）
+    "C4",    # comprehension
+    "SIM",   # 可简化写法
+    "N",     # 命名规范
+    "RET",   # return 一致性
+]
+ignore = [
+    "N802",   # Qt 重写方法沿用驼峰（mousePressEvent 等）
+    "N815",   # Qt 信号参数沿用驼峰
+    "SIM108", # 三元表达式可读性优先
+]
+# 说明：未启用 PTH（pathlib 强制规则）。本项目路径需与 PyInstaller 的
+# sys._MEIPASS / sys.executable 保持同构，且大量路径直接喂给 Qt 与 open()，
+# 混用 Path 反而增加转换成本，故保留 os.path。
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "SIM117", "B011"]
