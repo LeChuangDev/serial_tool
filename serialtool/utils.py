@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 __all__ = [
     "parse_hex",
@@ -90,11 +91,20 @@ def hex_str(data: bytes) -> str:
     return " ".join(f"{byte:02X}" for byte in data)
 
 
-def hex_dump_lines(data: bytes, width: int = 16) -> list[str]:
-    """按固定宽度切分为 HEX 文本行（导出用，避免一次拼接超大字符串）。"""
+def hex_dump_lines(data: bytes, width: int = 16) -> Iterator[str]:
+    """按固定宽度切分为 HEX 文本行，**惰性产出**。
+
+    导出 16MB 原始数据时，先物化成 list 要 60MB+ 临时内存（100 万行字符串），
+    边生成边写文件才是 O(1)。参数校验仍在调用时立即抛错（不推迟到迭代）。
+    """
     if width <= 0:
         raise ValueError("width 必须为正整数")
-    return [hex_str(data[i : i + width]) for i in range(0, len(data), width)]
+    return _iter_hex_lines(data, width)
+
+
+def _iter_hex_lines(data: bytes, width: int) -> Iterator[str]:
+    for start in range(0, len(data), width):
+        yield hex_str(data[start : start + width])
 
 
 def format_bytes(count: int) -> str:

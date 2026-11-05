@@ -12,7 +12,7 @@ from PyQt6.QtGui import QColor
 
 # ---- 应用信息 ----
 APP_NAME = "Leeco‑Serial 樂創串口调试终端"
-APP_VERSION = "3.4"  # 顶部徽标与"关于"统一引用
+APP_VERSION = "3.5"  # 顶部徽标与"关于"统一引用
 WINDOW_WIDTH = 1180
 WINDOW_HEIGHT = 800
 APP_ICON_NAME = os.path.join("assets", "app.ico")  # 多尺寸 ICO：窗口/任务栏与打包 exe 通用
@@ -168,7 +168,13 @@ WAVE_HISTORY = 512  # 波形样本数（字节）
 WAVE_CHART_HEIGHT = 96  # 波形条固定高度
 
 # ---- 接收原始数据缓冲（用于 HEX 导出，超限丢最旧） ----
-RX_RAW_CAP = 16 * 1024 * 1024
+# 分块字节环形缓冲：每块 64KB（16 的整数倍，HEX 导出不切碎十六进制行），
+# 丢弃只整块出队（O(1)），不会再像单个 bytearray 那样做一次 O(n) memmove。
+# 上限默认 8MB（约 115200 波特下 70 秒数据，足够 HEX 导出取一段调试突发）；
+# 想进一步压内存可在配置里把 rx_raw_cap_mb 调小，设 0 即完全不留存原始数据。
+RX_RAW_CAP = 8 * 1024 * 1024
+RX_RAW_CAP_DEFAULT_MB = 8
+RX_RAW_CHUNK = 64 * 1024
 
 # ---- 工作模式（左上角切换） ----
 MODE_TERMINAL = "terminal"  # 终端：文本收发

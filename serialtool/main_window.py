@@ -56,6 +56,7 @@ from . import config, panels, styles, utils
 from .highlight import Highlighter, parse_rules, serialize_rules
 from .plot_controller import PlotController
 from .ports import PortInfo, PortScanner, enumerate_ports, pick_port
+from .raw_buffer import ChunkedBytes
 from .reconnect import ReconnectPolicy, ReconnectScheduler
 from .recv_pipeline import SPLIT_BY_PACKET, SPLIT_MODE_MAP, RecvFormatter
 from .serial_worker import SerialWorker
@@ -116,7 +117,10 @@ class LecoSerial(PlotController, QMainWindow):
 
         # ---------- 接收管线 ----------
         self._formatter = RecvFormatter()
-        self._rx_raw = bytearray()  # 原始字节缓冲（HEX 导出用，超限丢最旧）
+        # 原始字节缓冲（HEX 导出用，环形，超限丢最旧）。容量上限在 load_settings
+        # 里按配置重建；这里先用默认常量，保证构造后即可安全使用。
+        self._keep_raw = True  # 是否在接收时留存原始字节（配置可关，省下整块缓冲）
+        self._rx_raw = ChunkedBytes(config.RX_RAW_CAP)
         self._paused_dropped = 0  # 暂停期间未显示的字节数
         self._font_size = config.DEFAULT_FONT_SIZE
         self._recv_theme = config.RECV_THEME_BLUE
@@ -950,12 +954,11 @@ class LecoSerial(PlotController, QMainWindow):
         self.rx_frames += len(packets)
 
         # 原始字节无论是否暂停都要留存：HEX 导出针对"收到的所有数据"，
-        # 暂停只影响显示，不应破坏导出内容的完整性。
-        for chunk, _ts in packets:
-            self._rx_raw.extend(chunk)
-        if len(self._rx_raw) > config.RX_RAW_CAP:
-            keep = config.RX_RAW_CAP // 8 * 7
-            del self._rx_raw[: len(self._rx_raw) - keep]
+        # 暂停只影响显示，不应破坏导出内容的完整性。环形缓冲自动丢弃最旧，
+        # 不再做 O(n) 的 bytearray 切片搬移（见 raw_buffer.ChunkedBytes）。
+        if self._keep_raw:
+            for chunk, _ts in packets:
+                self._rx_raw.append(chunk)
 
         if self._mode == config.MODE_PLOT:
             # 绘图模式：跳过文本/HEX/高亮渲染，直接把字节喂给协议解码器，
@@ -1784,7 +1787,11 @@ class LecoSerial(PlotController, QMainWindow):
             QMessageBox.warning(self, "错误", f"保存失败: {exc}")
 
     def export_log_hex(self) -> None:
-        """导出接收到的原始字节为 HEX 文本（每行 16 字节）。"""
+        """导出接收到的原始字节为 HEX 文本（每行 16 字节）。
+
+        逐块流式写出：每块都是 64KB（16 的整数倍，不会把十六进制行切两半），
+        不整体物化缓冲，导出瞬间内存零增长。
+        """
         if not self._rx_raw:
             QMessageBox.information(self, "提示", "当前没有已接收的原始数据")
             return
@@ -1793,11 +1800,13 @@ class LecoSerial(PlotController, QMainWindow):
         )
         if not path:
             return
+        total = len(self._rx_raw)
         try:
             with open(path, "w", encoding="ascii") as handle:
-                for line in utils.hex_dump_lines(bytes(self._rx_raw)):
-                    handle.write(line + "\n")
-            QMessageBox.information(self, "完成", f"已导出 {len(self._rx_raw)} 字节到:\n{path}")
+                for chunk in self._rx_raw.iter_chunks():
+                    for line in utils.hex_dump_lines(chunk):
+                        handle.write(line + "\n")
+            QMessageBox.information(self, "完成", f"已导出 {total} 字节到:\n{path}")
         except OSError as exc:
             QMessageBox.warning(self, "错误", f"导出失败: {exc}")
 
@@ -1954,6 +1963,18 @@ class LecoSerial(PlotController, QMainWindow):
             self.cb_protocol.setCurrentText(protocol_label)
         self._reset_plot_decoder()
         self._restore_plot_view()
+
+        # 原始字节缓冲：按配置重建容量（默认 8MB；设 0 即不留存，省下整块缓冲）。
+        # keep_raw 可在配置里关掉，给"从不导出 HEX"的用户完全释放这部分内存。
+        self._keep_raw = self.store.get_bool("keep_raw", True) and self._rx_raw_cap_bytes() > 0
+        self._rx_raw = ChunkedBytes(self._rx_raw_cap_bytes())
+
+    def _rx_raw_cap_bytes(self) -> int:
+        """原始字节缓冲容量上限（字节）。配置键 rx_raw_cap_mb，默认 8MB，<0 视为 0。"""
+        mb = self.store.get_int("rx_raw_cap_mb", config.RX_RAW_CAP_DEFAULT_MB)
+        if mb < 0:
+            mb = 0
+        return mb * 1024 * 1024
 
     def _restore_multisend(self) -> None:
         used = self.store.get_bool_list("multisend_used")

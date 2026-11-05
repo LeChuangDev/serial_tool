@@ -66,7 +66,7 @@ class TestFormatting:
         assert utils.hex_str(b"\x00\xab\xff") == "00 AB FF"
 
     def test_hex_dump_lines(self):
-        lines = utils.hex_dump_lines(bytes(range(20)))
+        lines = list(utils.hex_dump_lines(bytes(range(20))))  # 惰性生成器
         assert len(lines) == 2
         assert lines[0].count(" ") == 15
         assert lines[1] == " ".join(["10", "11", "12", "13"])

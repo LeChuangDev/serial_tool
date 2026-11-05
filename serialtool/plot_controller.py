@@ -270,14 +270,16 @@ class PlotController:
         否则用户设了比例 / 偏置后，CSV 与曲线对不上（且不该碰控件私有成员）。
         """
         names, rows = self.scope.export_rows()
+        count = 0
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write("time," + ",".join(names) + "\n")
-            for t, values in rows:
+            for t, values in rows:  # 逐行流式写，不在内存里攒整张表
                 cells = [f"{t:.6f}"]
                 for v in values:
                     cells.append("" if v != v else f"{v:.6g}")  # NaN（缺失通道）留空
                 fh.write(",".join(cells) + "\n")
-        self.show_tip(f"已导出 {len(rows)} 行到 {os.path.basename(path)}", 5000)
+                count += 1
+        self.show_tip(f"已导出 {count} 行到 {os.path.basename(path)}", 5000)
 
     def _restore_plot_view(self) -> None:
         """恢复绘图视图参数与通道元数据（名称 / 颜色 / 标定 / Y 轴量程）。

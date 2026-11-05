@@ -483,6 +483,24 @@ class TestRenderBudget:
         finally:
             self._cleanup(scope)
 
+    def test_storage_stays_compact(self, qapp):
+        """存储必须是 array 分块（每点 8 字节）：退回 deque[float] 会变 4 倍内存。
+
+        16 通道 × 1 万点 = 16 万个采样点，8 字节/点约 1.3MB；
+        deque[float] 要 ~5.1MB，一超就知道存储被换回去了。
+        """
+        from serialtool.scope import ScopeWidget
+
+        scope = ScopeWidget()
+        try:
+            for i in range(10_000):
+                scope.add_frame(i * 0.001, [float(i)] * 16)
+            assert scope.channel_count() == 16
+            # times + 16 通道 = 17 个序列 × 1 万点 × 8B ≈ 1.36MB
+            assert scope.memory_bytes() < 2 * 1024 * 1024
+        finally:
+            self._cleanup(scope)
+
     def test_adapt_keeps_target_fps_when_cheap(self, qapp):
         import time
 
@@ -515,8 +533,9 @@ class TestExportRows:
             scope.set_channel_scale(0, 10.0)
             names, rows = scope.export_rows()
             assert names == ["CH1", "CH2"]
-            assert rows[0][1][0] == pytest.approx(10.0)
-            assert rows[0][1][1] == pytest.approx(2.0)
+            first = next(rows)  # 流式生成器：逐行取，不整体复制
+            assert first[1][0] == pytest.approx(10.0)
+            assert first[1][1] == pytest.approx(2.0)
         finally:
             self._cleanup(scope)
 
@@ -529,7 +548,8 @@ class TestExportRows:
             scope.add_frame(0.0, [1.0])
             scope.add_frame(0.1, [2.0, 3.0])
             _, rows = scope.export_rows()
-            assert rows[0][1][1] != rows[0][1][1]  # NaN
-            assert rows[1][1][1] == pytest.approx(3.0)
+            first, second = list(rows)
+            assert first[1][1] != first[1][1]  # NaN
+            assert second[1][1] == pytest.approx(3.0)
         finally:
             self._cleanup(scope)

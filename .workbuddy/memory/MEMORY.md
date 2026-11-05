@@ -6,7 +6,7 @@
 
 ## 运行与验证（不要猜命令）
 - 解释器：`py -3.14`（Python 3.14.6 / PyQt6 6.11 / pyserial 3.5）。系统 `python` 是 3.13 且无依赖。
-- 测试：`py -3.14 -m pytest tests -q`（当前 295 用例，约 2m10s，offscreen，无需硬件；
+- 测试：`py -3.14 -m pytest tests -q`（当前 311 用例，约 2m10s，offscreen，无需硬件；
   工具默认 120s 超时会杀掉整套，要显式加大 timeout）
 - 检查：`py -3.14 -m ruff check .` / `py -3.14 -m ruff format --check .`（line-length 100）
 
@@ -26,6 +26,14 @@
 9. 绘制成本必须"有预算"：分析结果按 `_revision` 缓存、点数超列数时等距抽样、
    线段数超 `SCOPE_MAX_LINE_SEGMENTS` 时并列、按实测耗时在 10~30FPS 自适应降帧、
    数据无变化时 `_tick()` 直接不重绘。改动绘制路径要跑 `TestRenderBudget`。
+10. **采样存储必须是 `series_store.ChunkedSeries`（`array('d')`，8 字节/点）**，
+    不许退回 `deque[float]`（32 字节/点，16 通道满历史 105MB → 现在 26MB）。
+    它**故意不实现切片**，因为切片会诱使调用方复制整列；取尾部用 `tail(n)`。
+    导出必须流式（`export_rows` 返回生成器、HEX 按 128KB 分块）。`TestRenderBudget.test_storage_stays_compact` 守这条。
+11. **原始字节缓冲必须是 `raw_buffer.ChunkedBytes` 分块环形（每块 64KB，丢弃整块出队 O(1)）**，
+    不许退回单个 `bytearray` + `del buf[:n]` 切片搬移（O(n) memmove，且导出要整体 `memoryview` 复制）。
+    容量默认 8MB（`config.RX_RAW_CAP`，配置键 `rx_raw_cap_mb`；设 0 即不留存），导出走 `iter_chunks()` 流式。
+    `keep_raw` 配置关掉可完全释放这部分内存。`test_raw_buffer.py` 守这条。
 
 ## 已踩过的坑（回退前先看）
 - `TS_MODE_LABELS` 必须与 `TIMESTAMP_MODES` 成对维护，否则恢复配置永远落回默认。
@@ -54,6 +62,9 @@
 - `QLineF` 在 `PyQt6.QtCore`（不是 QtGui）。`_qcolor()` 返回共享 QColor，要改 alpha 先拷一份。
 - 本机负载波动大：微基准必须**交替 A/B 多轮取最小值**，单次测量能差 2 倍，否则会误判优化无效。
 - 面板 dataclass 加字段后，务必确认 `_bind_signals` 里接了信号 —— `btn_plot_pause` 曾建好却从未接线。
+- 生成器化函数要把**参数校验留在外层**（生成器函数体延迟执行，`pytest.raises` 捕不到 ValueError），
+  参考 `utils.hex_dump_lines` + `_iter_hex_lines` 的拆法。
+- 菜单/面板里的"导出"一律流式写盘：`list()` 物化 20 万行会瞬间吃掉 100MB。
 
 ## 已知限制
 - 无序列号 CH340 换口后只能按 VID:PID 匹配，双插同型号可能认错板子。

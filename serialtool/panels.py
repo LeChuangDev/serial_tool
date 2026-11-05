@@ -527,6 +527,9 @@ class RecvPanel:
         recv_box = RecvPlainTextEdit()
         recv_box.setReadOnly(True)
         recv_box.setMaximumBlockCount(config.MAX_BLOCKS)
+        # 接收区是只读输出流，撤销栈毫无用处：长时间挂机会一直堆 QUndoItem，
+        # 白白吃掉 C++ 堆（每天几万行时非常可观）
+        recv_box.setUndoRedoEnabled(False)
         recv_box.setPlaceholderText("等待数据 ...（Ctrl+F 查找 · Ctrl+滚轮 调整字号）")
         recv_box.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         body_layout.addWidget(recv_box, 1)

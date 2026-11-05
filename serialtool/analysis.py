@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 
 __all__ = [
     "fft",
@@ -108,8 +109,12 @@ def estimate_sample_rate(times: list[float]) -> float:
     return 1.0 / dt
 
 
-def histogram(values: list[float], bins: int = 32) -> tuple[list[float], list[int]]:
-    """等宽直方图，返回 ``(bin 中心列表, 计数列表)``。跳过 NaN。"""
+def histogram(values: Iterable[float], bins: int = 32) -> tuple[list[float], list[int]]:
+    """等宽直方图，返回 ``(bin 中心列表, 计数列表)``。跳过 NaN。
+
+    分桶需要先知道量程，所以要两遍 —— 这里先把非 NaN 值收一遍（``clean``），
+    之后的 min/max 与分桶都复用这份列表，避免二次遍历原序列。
+    """
     clean = [v for v in values if v == v]
     if not clean or bins <= 0:
         return [], []
@@ -130,14 +135,34 @@ def histogram(values: list[float], bins: int = 32) -> tuple[list[float], list[in
     return centers, counts
 
 
-def channel_stats(values: list[float]) -> dict[str, float]:
-    """通道统计：min / max / mean / rms / 峰峰值。跳过 NaN，空序列返回 NaN。"""
-    clean = [v for v in values if v == v]
-    if not clean:
+def channel_stats(values: Iterable[float]) -> dict[str, float]:
+    """通道统计：min / max / mean / rms / 峰峰值。跳过 NaN，空序列返回 NaN。
+
+    **单遍累加、不复制序列**：20 万点时 ``[v for v in values]`` 会瞬时多占 6MB，
+    而统计只需要 min/max/累加和/平方和四个量。传入 generator 也能用。
+    """
+    lo = math.inf
+    hi = -math.inf
+    total = 0.0
+    squares = 0.0
+    count = 0
+    for value in values:
+        if value != value:  # NaN
+            continue
+        if value < lo:
+            lo = value
+        if value > hi:
+            hi = value
+        total += value
+        squares += value * value
+        count += 1
+    if count == 0:
         nan = float("nan")
         return {"min": nan, "max": nan, "mean": nan, "rms": nan, "p2p": nan}
-    lo = min(clean)
-    hi = max(clean)
-    mean = sum(clean) / len(clean)
-    rms = math.sqrt(sum(v * v for v in clean) / len(clean))
-    return {"min": lo, "max": hi, "mean": mean, "rms": rms, "p2p": hi - lo}
+    return {
+        "min": lo,
+        "max": hi,
+        "mean": total / count,
+        "rms": math.sqrt(squares / count),
+        "p2p": hi - lo,
+    }

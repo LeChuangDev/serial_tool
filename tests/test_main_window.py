@@ -64,7 +64,7 @@ class TestPause:
     def test_paused_bytes_still_captured_for_hex_export(self, main_window):
         main_window.btn_pause.setChecked(True)
         _feed(main_window, b"\x01\x02")
-        assert bytes(main_window._rx_raw).endswith(b"\x01\x02")
+        assert main_window._rx_raw.to_bytes().endswith(b"\x01\x02")
 
 
 class TestPortList:

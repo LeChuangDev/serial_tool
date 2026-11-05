@@ -5,8 +5,8 @@
 1. **抽稀**：绘制前把可见区间按像素列聚合成 min/max 包络（``decimate``），
    绘制代价只与像素宽度相关，与采样点数解耦 —— 10 万点和 1 千点画起来一样快。
 2. **节流**：数据再快也只按 ``config.SCOPE_FPS`` 刷新重绘，避免高频数据把 UI 线程打满。
-3. **限内存**：时间轴与每条通道都是环形缓冲（``deque(maxlen=...)``），
-   越界丢最旧，长时间挂机采集不涨内存。
+3. **限内存**：时间轴与每条通道都是分块环形缓冲（``ChunkedSeries``，底层 ``array('d')``），
+   每点 8 字节（``deque[float]`` 要 32 字节），越界丢最旧，长时间挂机不涨内存。
 
 ``decimate`` 抽成纯函数，方便不依赖 Qt 直接单测。
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections import deque
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from itertools import islice
 
@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import analysis, config
+from .series_store import ChunkedSeries
 
 __all__ = ["ScopeWidget", "ChannelMeta", "decimate", "transform_value", "YRangeDialog"]
 
@@ -148,8 +149,10 @@ class ScopeWidget(QWidget):
         self.setMinimumHeight(180)
         self.setMouseTracking(True)
 
-        self._times: deque[float] = deque(maxlen=config.SCOPE_HISTORY)
-        self._series: list[deque[float]] = []
+        # 用分块 array 而不是 deque[float]：每点 8 字节 vs 32 字节，
+        # 16 通道满历史（20 万点）从 ~105MB 降到 ~26MB。见 series_store 模块说明。
+        self._times = ChunkedSeries(config.SCOPE_HISTORY)
+        self._series: list[ChunkedSeries] = []
         self._meta: list[ChannelMeta] = []  # 与 _series 下标对齐的通道显示元数据
         self._paused = False
         self._window = config.SCOPE_WINDOW_SECONDS
@@ -207,7 +210,9 @@ class ScopeWidget(QWidget):
         if m > len(series):
             pad = len(self._times) - 1  # 新通道用 NaN 补齐历史，保证对齐
             for _ in range(len(series), m):
-                series.append(deque([_NAN] * pad, maxlen=config.SCOPE_HISTORY))
+                fresh = ChunkedSeries(config.SCOPE_HISTORY)
+                fresh.extend_const(pad, _NAN)
+                series.append(fresh)
         # 元数据与新通道同步增长（保留用户已设的名称/颜色/标定）
         while len(self._meta) < m:
             self._meta.append(ChannelMeta())
@@ -298,7 +303,8 @@ class ScopeWidget(QWidget):
         key = ("stats", ch)
         cached = self._cache.get(key)
         if cached is None:
-            cached = analysis.channel_stats(list(self.channel_values(ch)))
+            # 直接传可迭代：channel_stats 单遍累加，不再先 list() 物化整列
+            cached = analysis.channel_stats(self.channel_values(ch))
             self._cache[key] = cached
         return dict(cached)  # 返回副本，避免调用方改动污染缓存
 
@@ -313,15 +319,30 @@ class ScopeWidget(QWidget):
         key = ("fft", ch)
         cached = self._cache.get(key)
         if cached is None:
-            samples = list(self.channel_values(ch))[-self._fft_points :]
-            times = list(self._times)[-len(samples) :]
-            fs = analysis.estimate_sample_rate(times)
+            samples = self._tail_values(ch, self._fft_points)
+            if len(samples) < 2:
+                return [], [], 0.0
+            fs = analysis.estimate_sample_rate(self._times.tail(len(samples)))
             if fs <= 0:
                 return [], [], 0.0
             freqs, mags = analysis.fft_spectrum(samples, fs)
             cached = (freqs, mags, fs)
             self._cache[key] = cached
         return cached
+
+    def _tail_values(self, ch: int, count: int) -> list[float]:
+        """取通道最后 ``count`` 个标定后值，只复制这一段（不物化整列）。"""
+        series = self._series[ch]
+        count = min(count, len(series))
+        if count <= 0:
+            return []
+        meta = self._meta_at(ch)
+        if meta.scale == 1.0 and meta.offset == 0.0:
+            return series.tail(count)  # 快路径：直接按块复制
+        start = len(series) - count
+        return [
+            transform_value(series[i], meta.scale, meta.offset) for i in range(start, len(series))
+        ]
 
     def histogram_data(self, ch: int, bins: int = 32) -> tuple[list[float], list[int]]:
         """指定通道的直方图 ``(bin 中心, 计数)``，基于标定后数据（同样带缓存）。"""
@@ -330,7 +351,10 @@ class ScopeWidget(QWidget):
         key = ("hist", ch, bins)
         cached = self._cache.get(key)
         if cached is None:
-            cached = analysis.histogram(list(self.channel_values(ch)), bins)
+            # 直方图要两遍（先 min/max 再分桶），标定后的生成器不可重复迭代，
+            # 因此这里必须物化成 list；未标定时直接用底层序列，零复制。
+            values = self.channel_values(ch)
+            cached = analysis.histogram(values, bins)
             self._cache[key] = cached
         return cached
 
@@ -365,19 +389,32 @@ class ScopeWidget(QWidget):
         self._bump()
         self.update()
 
-    def export_rows(self) -> tuple[list[str], list[tuple[float, list[float]]]]:
-        """导出用快照：``(通道名列表, [(时间戳, [各通道标定值]), ...])``。
+    def export_rows(self) -> tuple[list[str], Iterator[tuple[float, list[float]]]]:
+        """导出用的**流式**快照：``(通道名列表, 逐行生成器)``。
 
-        走 ``channel_values`` 而非底层原始序列 —— 导出的必须是界面上看到的值，
-        否则用户设了比例/偏置后 CSV 与曲线对不上。
+        逐行产出 ``(时间戳, [各通道标定值])``，不整体复制 —— 20 万点 × 16 通道
+        一次性物化要 100MB 临时内存，导出瞬间就把内存翻倍（甚至 MemoryError）。
+
+        取值走标定变换而非原始序列：导出的必须是界面上看到的值，否则用户设了
+        比例 / 偏置后 CSV 与曲线对不上。
         """
         names = [self.channel_name(i) for i in range(len(self._series))]
-        series = [list(self.channel_values(i)) for i in range(len(self._series))]
-        times = list(self._times)
-        rows: list[tuple[float, list[float]]] = []
-        for j, t in enumerate(times):
-            rows.append((t, [s[j] if j < len(s) else _NAN for s in series]))
-        return names, rows
+        series = self._series
+        times = self._times
+        metas = [self._meta_at(i) for i in range(len(series))]
+
+        def rows() -> Iterator[tuple[float, list[float]]]:
+            for index in range(len(times)):
+                values: list[float] = []
+                for ch, item in enumerate(series):
+                    value = item[index] if index < len(item) else _NAN
+                    meta = metas[ch]
+                    if meta.scale != 1.0 or meta.offset != 0.0:
+                        value = transform_value(value, meta.scale, meta.offset)
+                    values.append(value)
+                yield times[index], values
+
+        return names, rows()
 
     def clear(self) -> None:
         # 注意：只清数据、保留 _meta —— "清空"清的是曲线，用户花时间调好的
@@ -399,6 +436,14 @@ class ScopeWidget(QWidget):
 
     def channel_count(self) -> int:
         return len(self._series)
+
+    def memory_bytes(self) -> int:
+        """当前采样数据占用的近似字节数（分块 array，每点 8 字节）。
+
+        用来守住"不能退回 deque[float]"这条底线：每点 32 字节 vs 8 字节，
+        16 通道满历史时是 105MB 与 26MB 的差别。
+        """
+        return self._times.memory_bytes() + sum(s.memory_bytes() for s in self._series)
 
     # ---------- 通道元数据（名称 / 颜色 / 标定） ----------
     def _meta_at(self, ch: int) -> ChannelMeta:
@@ -464,8 +509,9 @@ class ScopeWidget(QWidget):
     def channel_values(self, ch: int):
         """指定通道"标定后"的值序列（应用 scale/offset），供绘制与统计。
 
-        scale=1 且 offset=0 时直接返回底层 deque（快路径），否则返回惰性生成器，
-        避免为纯显示变换分配整段新列表。
+        scale=1 且 offset=0 时直接返回底层 ``ChunkedSeries``（快路径，零复制），
+        否则返回惰性生成器，避免为纯显示变换分配整段新列表。两者都只可迭代、
+        不可切片 —— 这正是在源头上防止"复制整列"的地方。
         """
         if not (0 <= ch < len(self._series)):
             return []
@@ -483,13 +529,22 @@ class ScopeWidget(QWidget):
 
     # ---------- 绘制 ----------
     def _trim(self, t0: float) -> None:
-        """丢弃窗口外旧数据（时间轴单调递增，popleft 均摊 O(1)）。"""
+        """丢弃窗口外旧数据（时间轴单调递增）。
+
+        先数出要丢多少个再一次性 ``drop_front``：分块存储的丢弃是整块出队，
+        比逐点 ``popleft``（每点一次 Python 方法调用 × 通道数）快得多。
+        """
         times = self._times
-        while times and times[0] < t0:
-            times.popleft()
-            for s in self._series:
-                if s:
-                    s.popleft()
+        drop = 0
+        for stamp in times:
+            if stamp >= t0:
+                break
+            drop += 1
+        if drop <= 0:
+            return
+        times.drop_front(drop)
+        for series in self._series:
+            series.drop_front(drop)
 
     def _tick(self) -> None:
         """重绘节流的心跳：数据没变且没有游标要刷新时，一次都不画。
