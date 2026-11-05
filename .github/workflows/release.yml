@@ -42,7 +42,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}
-          path: dist/LeecoSerial*
+          # 只上传压缩包：裸二进制体积更大且无版本信息，不进 Release
+          path: |
+            dist/LeecoSerial-v*-win64.zip
+            dist/LeecoSerial-v*-linux-x64.tar.gz
 
   release:
     needs: build
@@ -58,5 +61,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/LeecoSerial*
+          files: |
+            dist/LeecoSerial-v*-win64.zip
+            dist/LeecoSerial-v*-linux-x64.tar.gz
           generate_release_notes: true

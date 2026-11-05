@@ -37,3 +37,5 @@ log/
 
 # 界面设计稿（设计工具工作区，按需保留）
 serial-tool-redesign/.preflight/
+
+.workbuddy/
