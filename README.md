@@ -10,7 +10,7 @@ A cross-platform serial terminal built with PyQt6 — text I/O + VOFA+-style rea
 
 <br/>
 
-![Version](https://img.shields.io/badge/version-3.5-2f6bff)
+![Version](https://img.shields.io/badge/version-3.5.1-2f6bff)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5%2B-41cd52)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
@@ -85,12 +85,12 @@ python main.py
 
 ```bat
 :: Windows（cmd / PowerShell）
-build_windows.bat        :: 产出 dist\LeecoSerial\LeecoSerial.exe 与 dist\LeecoSerial-v3.5-win64.zip
+build_windows.bat        :: 产出 dist\LeecoSerial\LeecoSerial.exe 与 dist\LeecoSerial-v3.5.1-win64.zip
 ```
 
 ```bash
 # Linux
-./build_linux.sh         # 产出 dist/LeecoSerial/LeecoSerial 与 dist/LeecoSerial-v3.5-linux-x64.tar.gz
+./build_linux.sh         # 产出 dist/LeecoSerial/LeecoSerial 与 dist/LeecoSerial-v3.5.1-linux-x64.tar.gz
 ```
 
 两个脚本都是 4 步：装依赖 → `ruff check` + `pytest` → PyInstaller 打包 → 压包并生成 `SHA256SUMS.txt`。检查或测试不通过会直接中断，不会产出半成品。
@@ -102,7 +102,7 @@ build_windows.bat        :: 产出 dist\LeecoSerial\LeecoSerial.exe 与 dist\Lee
 仓库已内置工作流 [.github/workflows/release.yml](.github/workflows/release.yml)：推送 `v*` 标签即自动在 Windows / Linux 两个 runner 上构建，并把压缩包挂到对应 Release。
 
 ```bash
-git tag v3.5
+git tag v3.5.1
 git push origin main --tags
 ```
 
@@ -327,7 +327,8 @@ serial_tool/
 
 **已完成**
 
-- [x] v3.5：PyInstaller 单文件打包 + Windows 版本信息 + 图标 + GitHub Actions 自动发布
+- [x] v3.5：PyInstaller 打包 + Windows 版本信息 + 图标 + GitHub Actions 自动发布
+- [x] v3.5.1：onedir 产物、CI 打包前跑检查与测试、SHA256 校验和、Issue 模板
 
 ## 📄 许可证
 

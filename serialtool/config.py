@@ -12,7 +12,7 @@ from PyQt6.QtGui import QColor
 
 # ---- 应用信息 ----
 APP_NAME = "Leeco‑Serial 樂創串口调试终端"
-APP_VERSION = "3.5"  # 顶部徽标与"关于"统一引用
+APP_VERSION = "3.5.1"  # 顶部徽标与"关于"统一引用
 WINDOW_WIDTH = 1180
 WINDOW_HEIGHT = 800
 APP_ICON_NAME = os.path.join("assets", "app.ico")  # 多尺寸 ICO：窗口/任务栏与打包 exe 通用
