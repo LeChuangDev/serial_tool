@@ -3,7 +3,6 @@ name: Build & Release
 on:
   push:
     tags: ["v*"]
-    branches: ["ci-debug"]
   workflow_dispatch:
 
 jobs:
