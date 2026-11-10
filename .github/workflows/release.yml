@@ -3,6 +3,7 @@ name: Build & Release
 on:
   push:
     tags: ["v*"]
+    branches: ["ci-debug"]
   workflow_dispatch:
 
 jobs:
@@ -20,12 +21,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Qt 在 Linux runner 上需要这些系统库才能 import（offscreen 测试同样需要）
+      # Qt 在 Linux runner 上需要这些系统库才能 import（offscreen 测试同样需要）；
+      # 中文字体缺失会让布局审计用例的字体度量与本地不一致，必须装 CJK 字体
       - name: 安装 Linux 系统依赖
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 fonts-noto-cjk
 
       - name: 安装依赖
         run: pip install -r requirements-dev.txt
@@ -48,7 +50,18 @@ jobs:
         run: python -m ruff check .
 
       - name: 单元测试
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          python -m pytest -q 2>&1 | tee pytest.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            # 失败信息写进 check-run annotation：日志接口需要登录，annotation 是公开可读的
+            summary=$(grep -E '^(FAILED|ERROR) ' pytest.log | head -15 | tr '\n' ';')
+            echo "::error title=pytest 失败::${summary:-pytest exit $status}"
+            tail -60 pytest.log
+            exit "$status"
+          fi
 
       - name: 打包
         run: python -m PyInstaller --noconfirm --clean serial_tool.spec
