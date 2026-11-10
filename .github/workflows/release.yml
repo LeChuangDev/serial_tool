@@ -20,32 +20,65 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Qt 在 Linux runner 上需要这些系统库才能 import（offscreen 测试同样需要）
+      - name: 安装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
+
       - name: 安装依赖
-        run: pip install -r requirements.txt "pyinstaller>=6.10"
+        run: pip install -r requirements-dev.txt
+
+      - name: 校验版本号（唯一源 serialtool/config.py）
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          cfg = pathlib.Path("serialtool/config.py").read_text(encoding="utf-8")
+          project = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          app = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', cfg, re.M).group(1)
+          pkg = re.search(r'^version\s*=\s*"([^"]+)"', project, re.M).group(1)
+          print(f"config.APP_VERSION={app}  pyproject.version={pkg}")
+          if not (pkg == app or pkg.startswith(app + ".")):
+              sys.exit("版本号不一致：请同步 pyproject.toml 的 version")
+          PY
+
+      - name: 静态检查
+        run: python -m ruff check .
+
+      - name: 单元测试
+        run: python -m pytest -q
 
       - name: 打包
         run: python -m PyInstaller --noconfirm --clean serial_tool.spec
 
-      - name: 打压缩包（Linux）
+      - name: 打包版本号
+        shell: bash
+        run: echo "APP_VERSION=$(python -c 'import serialtool.config as c; print(c.APP_VERSION)')" >> "$GITHUB_ENV"
+
+      - name: 压缩（Linux）
         if: runner.os == 'Linux'
         run: |
-          V=${GITHUB_REF_NAME#v}
-          tar -czf "dist/LeecoSerial-v${V}-linux-x64.tar.gz" -C dist LeecoSerial
+          tar -czf "dist/LeecoSerial-v${APP_VERSION}-linux-x64.tar.gz" -C dist LeecoSerial
+          ( cd dist && sha256sum "LeecoSerial-v${APP_VERSION}-linux-x64.tar.gz" > SHA256SUMS-linux.txt )
 
-      - name: 打压缩包（Windows）
+      - name: 压缩（Windows）
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         run: |
-          $V = $env:GITHUB_REF_NAME -replace '^v',''
-          Compress-Archive -Path dist/LeecoSerial.exe -DestinationPath "dist/LeecoSerial-v$V-win64.zip" -Force
+          PKG="LeecoSerial-v${APP_VERSION}-win64.zip"
+          powershell -NoProfile -Command "Compress-Archive -Path 'dist/LeecoSerial' -DestinationPath 'dist/$PKG' -Force"
+          ( cd dist && sha256sum "$PKG" > SHA256SUMS-windows.txt )
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}
-          # 只上传压缩包：裸二进制体积更大且无版本信息，不进 Release
+          # 只上传压缩包与校验和：裸二进制体积更大且无版本信息，不进 Release
           path: |
-            dist/LeecoSerial-v*-win64.zip
-            dist/LeecoSerial-v*-linux-x64.tar.gz
+            dist/LeecoSerial-v*.zip
+            dist/LeecoSerial-v*.tar.gz
+            dist/SHA256SUMS-*.txt
 
   release:
     needs: build
@@ -56,12 +89,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: pkg
           merge-multiple: true
+
+      # 两个平台各生成一份校验和，合并成一份再上传
+      - name: 合并校验和
+        run: |
+          cat pkg/SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/LeecoSerial-v*-win64.zip
-            dist/LeecoSerial-v*-linux-x64.tar.gz
+            pkg/LeecoSerial-v*-win64.zip
+            pkg/LeecoSerial-v*-linux-x64.tar.gz
+            SHA256SUMS.txt
           generate_release_notes: true

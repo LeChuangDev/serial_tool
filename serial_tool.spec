@@ -1,20 +1,40 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包配置（Windows / Linux 通用，单文件模式）。
+"""PyInstaller 打包配置（Windows / Linux 通用，onedir 模式）。
+
+采用 onedir 而非 onefile 的原因：
+- onefile 每次启动都要解压到临时目录，冷启动慢 1~2 秒；
+- onefile 的自解压行为更容易触发 Windows Defender / SmartScreen 误报；
+- onedir 的 Qt 插件（platforms / imageformats）缺失时更容易排查。
 
 用法（项目根目录）：
     python -m PyInstaller --noconfirm --clean serial_tool.spec
 
-产物：dist/LeecoSerial（Windows 为 LeecoSerial.exe，Linux 为同名 ELF 单文件）。
-改版本号时同步更新本文件的 APP_VERSION_STR / APP_VERSION_TUPLE。
+产物：dist/LeecoSerial/（Windows 内为 LeecoSerial.exe，Linux 内为同名可执行文件）。
+版本号唯一来源是 serialtool/config.py 的 APP_VERSION，本文件不再硬编码。
 """
 
 import os
+import re
 import sys
 
 APP_NAME = "LeecoSerial"
-APP_VERSION_STR = "3.5.0"
-APP_VERSION_TUPLE = (3, 5, 0, 0)  # Windows 版本资源用
 APP_DISPLAY = "Leeco-Serial 樂創串口调试终端"
+
+
+def _read_app_version() -> str:
+    """从 serialtool/config.py 读取 APP_VERSION（唯一版本源）。"""
+    path = os.path.join(SPECPATH, "serialtool", "config.py")
+    with open(path, encoding="utf-8") as fh:
+        match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', fh.read(), re.MULTILINE)
+    if not match:
+        raise SystemExit("打包失败：无法从 serialtool/config.py 读取 APP_VERSION")
+    return match.group(1)
+
+
+APP_VERSION = _read_app_version()
+_parts = [int(x) for x in re.findall(r"\d+", APP_VERSION)]
+APP_VERSION_STR = ".".join(str(p) for p in (_parts + [0, 0, 0])[:3])
+APP_VERSION_TUPLE = tuple((_parts + [0, 0, 0, 0])[:4])
 
 # 资源文件打进包内（config.resource_path 兼容 sys._MEIPASS，运行时仍可定位）
 datas = [
@@ -85,11 +105,20 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
+    [],
+    exclude_binaries=True,  # onedir：二进制不入 exe，交给 COLLECT
     name=APP_NAME,
     console=False,  # GUI 程序不弹控制台窗口
     strip=False,
     upx=False,  # 关闭 UPX：压缩产物常被杀毒软件误报
     **win_kwargs,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name=APP_NAME,
 )

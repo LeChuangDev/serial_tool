@@ -41,6 +41,7 @@ A cross-platform serial terminal built with PyQt6 — text I/O + VOFA+-style rea
 | 📨 **可靠收发** | 增量解码（UTF-8 / GBK 跨包不乱码）、文件发送限速 + 进度 + 取消、写队列背压 |
 | 🐞 **调试细节** | 三种时间戳（时钟 / 相对 / 包间隔增量）、关键字高亮、端口参数记忆、发送 BREAK |
 | 💾 **内存有界** | 示波器每通道 20 万点仅约 26MB，导出流式写出，长时间挂机内存不涨 |
+| 🛡️ **脏数据不崩** | 未闭合的浮点帧有硬上限、无帧尾也不会撑爆内存（Serial Studio 同类场景会崩、VOFA+ 无换行会卡死） |
 | 🪶 **零重量依赖** | 仅 PyQt6 + pyserial，FFT / 统计全部纯 Python 实现，无需 numpy |
 
 ## 📸 截图
@@ -70,12 +71,13 @@ python main.py
 
 | 平台 | 文件 | 使用方法 |
 | :--- | :--- | :--- |
-| Windows x64 | `LeecoSerial-vX.Y-win64.zip` | 解压后双击 `LeecoSerial.exe` |
-| Linux x64 | `LeecoSerial-vX.Y-linux-x64.tar.gz` | 解压后 `chmod +x LeecoSerial && ./LeecoSerial` |
+| Windows x64 | `LeecoSerial-vX.Y-win64.zip` | 解压后进入 `LeecoSerial/` 目录，双击 `LeecoSerial.exe` |
+| Linux x64 | `LeecoSerial-vX.Y-linux-x64.tar.gz` | 解压后进入 `LeecoSerial/` 目录，`chmod +x LeecoSerial && ./LeecoSerial` |
 
+- 每个 Release 附带 `SHA256SUMS.txt`，可用 `sha256sum -c`（Linux）或 `Get-FileHash`（Windows）校验完整性
 - CH340 等 USB 串口驱动见 [drivers/](drivers/)（Windows）；CP210x / FT232 请从厂商官网获取
-- 打包版把**配置与日志写在 exe 所在目录**（`logs/` 等），移动 exe 即整体迁移
-- 单文件模式首次启动需解压到临时目录，会慢 1~2 秒，属正常现象
+- 打包版把**配置与日志写在可执行文件同目录**（`logs/` 等），移动整个 `LeecoSerial/` 文件夹即整体迁移
+- Windows 版本未做代码签名，首次运行可能提示 SmartScreen「未知发布者」，点「更多信息 → 仍要运行」即可；介意的话可自行从源码构建
 
 ## 🛠️ 打包与发布
 
@@ -83,13 +85,17 @@ python main.py
 
 ```bat
 :: Windows（cmd / PowerShell）
-build_windows.bat        :: 产出 dist\LeecoSerial.exe 与 dist\LeecoSerial-v3.5-win64.zip
+build_windows.bat        :: 产出 dist\LeecoSerial\LeecoSerial.exe 与 dist\LeecoSerial-v3.5-win64.zip
 ```
 
 ```bash
 # Linux
-./build_linux.sh         # 产出 dist/LeecoSerial 与 dist/LeecoSerial-v3.5-linux-x64.tar.gz
+./build_linux.sh         # 产出 dist/LeecoSerial/LeecoSerial 与 dist/LeecoSerial-v3.5-linux-x64.tar.gz
 ```
+
+两个脚本都是 4 步：装依赖 → `ruff check` + `pytest` → PyInstaller 打包 → 压包并生成 `SHA256SUMS.txt`。检查或测试不通过会直接中断，不会产出半成品。
+
+产物采用 **onedir**（目录 + 可执行文件）而非 onefile（单文件自解压）：onefile 每次启动要解压到临时目录，冷启动慢 1~2 秒，且更容易被 Windows Defender 误报。
 
 ### GitHub Actions 自动构建（推荐）
 
@@ -101,7 +107,8 @@ git push origin main --tags
 ```
 
 > ⚠️ PyInstaller 不支持交叉编译 —— Linux 产物必须在 x86_64 Linux 上构建（CI 已自动处理）。
-> 改版本号时同步更新四处：`serialtool/config.py` 的 `APP_VERSION`、`serial_tool.spec`、两个打包脚本里的 `VERSION`、`pyproject.toml`。
+> 版本号**只有一个来源**：`serialtool/config.py` 的 `APP_VERSION`。spec、两个打包脚本、产物文件名全部从它派生；
+> `pyproject.toml` 的 `version` 由 CI 校验必须与之一致，不一致会直接中断发布。
 
 ## 🎯 详细功能
 

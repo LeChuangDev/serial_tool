@@ -1,0 +1,91 @@
+name: 缺陷报告 / Bug report
+description: 程序崩溃、行为异常、数据显示错误
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。为了让问题能快速定位，请把下面几项填完整。
+        提交前请先看一下 [README 的「已知限制」](../../#-已知限制)，部分现象是已知行为。
+
+  - type: input
+    id: version
+    attributes:
+      label: 程序版本
+      description: 窗口标题栏或「关于」里的版本号；打包版可在文件名看到
+      placeholder: "例如 3.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows 7 / 8
+        - Ubuntu / Debian
+        - 其他 Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: 运行方式
+      options:
+        - 下载的 Release 压缩包
+        - 源码运行（python main.py）
+    validations:
+      required: true
+
+  - type: input
+    id: chip
+    attributes:
+      label: USB 转串口芯片
+      description: 设备管理器 / `lsusb` 里看到的型号，影响驱动与时序问题
+      placeholder: "例如 CH340 / CP2102 / FT232 / 板载"
+
+  - type: input
+    id: params
+    attributes:
+      label: 串口参数
+      placeholder: "例如 COM5, 115200, 8N1, 无流控"
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从启动开始，按顺序写清楚每一步操作
+      placeholder: |
+        1. 打开程序，选择 COM5 / 115200
+        2. 点击连接
+        3. 发送 1KB 文件
+        4. 观察到 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 vs 实际结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: |
+        请附上运行日志（打包版在 exe 同目录的 `logs/app.log`，源码运行在项目根的 `logs/app.log`）。
+        可直接拖入文件，注意先删掉敏感内容。
+      render: text
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图 / 录屏
+      description: 界面问题请附截图，有助于判断布局与渲染问题

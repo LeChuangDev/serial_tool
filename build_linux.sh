@@ -1,20 +1,34 @@
 #!/usr/bin/env sh
-# ===================== Leeco-Serial Linux 一键打包 =====================
-# 注意：PyInstaller 不支持交叉编译，请在与目标机相同架构（x86_64）的 Linux 上构建。
-# 版本号需与 serialtool/config.py 的 APP_VERSION 保持一致。
+# ===================== Leeco-Serial Linux build =====================
+# Version comes from serialtool/config.py (single source of truth).
+# PyInstaller cannot cross-compile: build on the target architecture (x86_64).
 set -e
 cd "$(dirname "$0")"
-VERSION=3.5
 
-echo "[1/3] 安装依赖..."
-python3 -m pip install -r requirements.txt "pyinstaller>=6.10"
+PY=python3
+command -v "$PY" >/dev/null 2>&1 || { echo "[ERROR] python3 not found"; exit 1; }
 
-echo "[2/3] PyInstaller 打包..."
-python3 -m PyInstaller --noconfirm --clean serial_tool.spec
+echo "[1/4] Installing dependencies..."
+"$PY" -m pip install -r requirements-dev.txt
 
-echo "[3/3] 压缩发布包..."
-tar -czf "dist/LeecoSerial-v${VERSION}-linux-x64.tar.gz" -C dist LeecoSerial
+VERSION=$("$PY" -c "import serialtool.config as c; print(c.APP_VERSION)")
+PKG="LeecoSerial-v${VERSION}-linux-x64.tar.gz"
+echo "[info] version = ${VERSION}"
+
+echo "[2/4] Static check and tests..."
+"$PY" -m ruff check .
+"$PY" -m pytest -q
+
+echo "[3/4] Building with PyInstaller..."
+"$PY" -m PyInstaller --noconfirm --clean serial_tool.spec
+
+echo "[4/4] Packaging release archive..."
+[ -x "dist/LeecoSerial/LeecoSerial" ] || { echo "[ERROR] dist/LeecoSerial/LeecoSerial not found"; exit 1; }
+rm -rf dist/LeecoSerial/logs
+tar -czf "dist/${PKG}" -C dist LeecoSerial
+( cd dist && sha256sum "$PKG" > SHA256SUMS.txt )
 
 echo ""
-echo "[完成] dist/LeecoSerial"
-echo "[完成] dist/LeecoSerial-v${VERSION}-linux-x64.tar.gz"
+echo "[DONE] dist/LeecoSerial/LeecoSerial"
+echo "[DONE] dist/${PKG}"
+echo "[DONE] dist/SHA256SUMS.txt"

@@ -1,0 +1,15 @@
+# 统一换行符：Windows 批处理必须是 CRLF，其余脚本必须是 LF
+# 否则 clone 到不同平台后 .bat 会被 cmd.exe 截断成乱码命令
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.spec text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.ico binary
+*.png binary
+*.exe binary
